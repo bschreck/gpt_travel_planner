@@ -1,0 +1,39 @@
+[project]
+name = "gpt_travel_planner"
+version = "1"
+dependencies = [
+    "duffel-api",
+    "ortools",
+    "pyflightdata",
+    "numpy",
+    "pandas",
+    "tenacity",
+    "tqdm",
+    "fire",
+    "httpx",
+    "haversine",
+    "networkx"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "black",
+  "pytest_httpx"
+]
+
+dev = [
+  "jupyter",
+]
+
+[tool.black]
+line-length = 88
+skip-magic-trailing-comma = true
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
+markers = [
+]
+
