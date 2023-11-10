@@ -1,3 +1,4 @@
 .env
 *.csv
 *.egg-info
+__pycache__
