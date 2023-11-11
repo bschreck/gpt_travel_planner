@@ -2,3 +2,7 @@
 *.csv
 *.egg-info
 __pycache__
+*.pickle
+*.ipynb
+*.ipynb_checkpoints
+.envrc

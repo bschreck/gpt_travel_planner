@@ -16,6 +16,7 @@ from requests import HTTPError
 import enum
 from collections import OrderedDict
 import pickle
+import numpy as np
 
 load_dotenv()
 
@@ -26,6 +27,20 @@ class TimeOfDay(enum.StrEnum):
     AFTERNOON = "afternoon"
     EVENING = "evening"
     RED_EYE = "red_eye"
+
+    @classmethod
+    def map_time(cls, depart_time: datetime.time, arrive_time: datetime.time):
+        hour = depart_time.hour
+        if arrive_time < depart_time:
+            return cls.RED_EYE
+        elif hour <= 6:
+            return cls.EARLY_MORNING
+        elif hour <= 12:
+            return cls.MORNING
+        elif hour <= 17:
+            return cls.AFTERNOON
+        else:
+            return cls.EVENING
 
 class SeatClass(enum.StrEnum):
     ECONOMY = "economy"
@@ -45,22 +60,44 @@ class SeatLocation(enum.StrEnum):
 
 @dataclass
 class UserFlightPreferences:
-    time_of_day_order: dict[TimeOfDay, int]
+    time_of_day_order: list[TimeOfDay]
     hard_max_cost: float
     soft_max_cost: float
     single_leg_hard_max_cost: float
     single_leg_soft_max_cost: float
-    max_stops: int
+    soft_max_duration: datetime.timedelta
     hard_max_duration: datetime.timedelta
-    min_layover_duration: datetime.timedelta
-    max_layover_duration: datetime.timedelta
+
+    soft_max_stops: int
+    hard_max_stops: int
+    soft_min_layover_duration: datetime.timedelta
+    hard_min_layover_duration: datetime.timedelta
+    soft_max_layover_duration: datetime.timedelta
+    hard_max_layover_duration: datetime.timedelta
+
     airline_preferences: dict[str, int]
     seat_class_prefernces: dict[SeatClass, int]
     seat_location_preference: SeatLocation
     seat_location_row_preference: SeatRow
     desires_extra_legroom: bool
     # TODO how to encode preferences for cost vs duration
-    cost_sensitivity: float # must be tunable perhaps by asking the user questions
+    #cost_sensitivity: float # must be tunable perhaps by asking the user questions
+    total_cost_weight: float = 0.4
+    total_duration_weight: float = 0.2
+    preferred_airline_ratio_weight: float = 0.05
+    time_of_day_weight: float = 0.15
+    layover_duration_weight: float = 0.1
+    nstops_weight: float = 0.1
+
+    def __post_init__(self):
+        assert np.isclose(
+            self.total_cost_weight +
+            self.total_duration_weight +
+            self.preferred_airline_ratio_weight +
+            self.time_of_day_weight +
+            self.layover_duration_weight +
+            self.nstops_weight, 1)
+
 
 class PassengerType(enum.StrEnum):
     ADULT = "adult"
@@ -239,21 +276,25 @@ def seed_data():
             age=30,
         ),
         flight_preferences=UserFlightPreferences(
-            time_of_day_order={
-                TimeOfDay.EARLY_MORNING: 1,
-                TimeOfDay.MORNING: 2,
-                TimeOfDay.AFTERNOON: 3,
-                TimeOfDay.EVENING: 4,
-                TimeOfDay.RED_EYE: 5,
-            },
+            time_of_day_order=[
+                TimeOfDay.MORNING,
+                TimeOfDay.AFTERNOON,
+                TimeOfDay.EVENING,
+                TimeOfDay.EARLY_MORNING,
+                TimeOfDay.RED_EYE
+            ],
             hard_max_cost=1000,
             soft_max_cost=500,
             single_leg_hard_max_cost=250,
             single_leg_soft_max_cost=200,
-            max_stops=1,
+            soft_max_stops=1,
+            hard_max_stops=2,
+            soft_min_layover_duration=datetime.timedelta(hours=1.5),
+            hard_min_layover_duration=datetime.timedelta(hours=0.75),
+            soft_max_layover_duration=datetime.timedelta(hours=2),
+            hard_max_layover_duration=datetime.timedelta(hours=6),
+            soft_max_duration=datetime.timedelta(hours=5),
             hard_max_duration=datetime.timedelta(hours=20),
-            min_layover_duration=datetime.timedelta(hours=1),
-            max_layover_duration=datetime.timedelta(hours=6),
             airline_preferences={
                 "Aeromexico": 1,
                 "United Airlines": 2,
@@ -265,7 +306,21 @@ def seed_data():
             seat_location_preference=SeatLocation.AISLE,
             seat_location_row_preference=SeatRow.MIDDLE,
             desires_extra_legroom=True,
-            cost_sensitivity=0.5,
+
+
+            #  total_cost_weight = 0.4,
+            #  total_duration_weight= 0.2,
+            #  preferred_airline_ratio_weight= 0.05,
+            #  time_of_day_weight = 0.15,
+            #  layover_duration_weight= 0.1,
+            #  nstops_weight= 0.1,
+
+            total_cost_weight = 0.1,
+            total_duration_weight= 0.3,
+            preferred_airline_ratio_weight= 0.5,
+            time_of_day_weight = 0.02,
+            layover_duration_weight= 0.04,
+            nstops_weight= 0.04,
         )
     )
     flight_legs = [
@@ -290,10 +345,91 @@ def seed_data():
     ]
     return user, flight_legs
 
+def nonlinear_cost_mapping(cost, soft_max, hard_max, decay_start_value):
+    """
+    Maps a cost value to a nonlinear output with two phases: linear and exponential decay.
+
+    :param cost: float, the cost value to map, analogous to the duration in seconds
+    :param soft_max: float, the threshold at which the output starts to decrease exponentially, analogous to softmax_duration in seconds
+    :param hard_max: float, the threshold at which the output becomes 0, analogous to hard_max_duration in seconds
+    :param decay_start_value: float, the value at the start of the exponential decay phase, analogous to the y-cutoff value
+    :return: float, the mapped value
+    """
+    # Check if the cost is beyond the hard max threshold
+    if cost >= hard_max:
+        return 0
+
+    # Linearly decreasing phase
+    if cost <= soft_max:
+        # Linear interpolation between (0, 1) and (soft_max, decay_start_value)
+        return linear_interpolation(cost, 0, soft_max, 1, decay_start_value)
+    else:
+        # Exponentially decreasing phase
+        # Calculate the exponent based on the remaining threshold
+        remaining_threshold = hard_max - soft_max
+        remaining_cost = cost - soft_max
+
+        # Exponential function: decay_start_value * e^(-x) where x is scaled to the remaining threshold
+        scale = -np.log(decay_start_value) / remaining_threshold
+        return decay_start_value * np.exp(-scale * remaining_cost)
+
+def linear_interpolation(x, x1, x2, y1, y2):
+    return y1 + ((x - x1) / (x2 - x1)) * (y2 - y1)
+
+# TODO this is wrong or more variables can be added like steepness
+def exp_interpolation(x, x1, x2, y1, y2):
+    scale = np.log(y2 / y1) / (x2 - x1)
+    return y1 / y2 * np.exp(scale * (x-x1))
+
+# TODO this is wrong
+def concave_down_exp(x, x1, x2, y1, y2, steepness=1):
+    b=np.log(y1+steepness-y2)/(x2-x1)
+    return (y1+steepness) - steepness*np.exp(b*(x-x1))
+
+
+
+def inverse_nonlinear_cost_mapping_4_phase(cost, soft_min, hard_min, soft_max, hard_max, decay_1_start_value=0.25, decay_2_start_value=0.75):
+    if cost <= hard_min:
+        return 1
+    elif cost >= hard_max:
+        return 1
+    elif cost <= soft_min:
+        return concave_down_exp(cost, hard_min, soft_min, 1, decay_1_start_value)
+        ## exponentially decreasing phase (hard_min, 1) and (soft_min, decay_1_start_value)
+        #remaining_threshold = soft_min - hard_min
+        #remaining_cost = soft_min - cost
+        #scale = -np.log(1/decay_1_start_value) / remaining_threshold
+        #return decay_1_start_value * np.exp(-scale * remaining_cost)
+    elif cost >= soft_min and cost <= soft_max:
+        # Linear interpolation between (soft_min, decay_1_start_value), (soft_max, decay_2_start_value)
+        return linear_interpolation(cost, soft_min, soft_max, decay_1_start_value, decay_2_start_value)
+    else:
+        return exp_interpolation(cost, soft_max, hard_max, decay_2_start_value, 1)
+        ## Exponentially increasing phase between (soft_max, decay_2_start_value) and (hard_max, 1)
+        #remaining_threshold = hard_max - soft_max
+        #remaining_cost = cost - soft_max
+        #scale = np.log(1/decay_2_start_value) / remaining_threshold
+        #return decay_2_start_value * np.exp(scale * remaining_cost)
+
+def offers_total_cost_score(offers: list[Offer], soft_max_cost: float, hard_max_cost: float, decay_start_value: float = 0.75):
+    total_cost = sum(float(o.total_amount) for o in offers)
+    return nonlinear_cost_mapping(total_cost, soft_max_cost, hard_max_cost, decay_start_value)
+
 def offer_total_duration(offer: Offer):
     segments = offer.slices[0].segments
     return segments[-1].arriving_at - segments[0].departing_at
 
+def offer_total_duration_score(offer: Offer, soft_max_duration: datetime.timedelta, hard_max_duration: datetime.timedelta, decay_start_value: float = 0.75):
+    soft_max_seconds = soft_max_duration.total_seconds()
+    hard_max_seconds = hard_max_duration.total_seconds()
+    total_duration = offer_total_duration(offer).total_seconds()
+    return nonlinear_cost_mapping(total_duration, soft_max_seconds, hard_max_seconds, decay_start_value)
+
+def offers_total_duration_score(offers: Offer, soft_max_duration: datetime.timedelta, hard_max_duration: datetime.timedelta, decay_start_value: float = 0.75):
+    return max(offer_total_duration_score(o, soft_max_duration, hard_max_duration, decay_start_value) for o in offers)
+
+
+# TODO should use order of desired airlines instead of binary
 def offer_is_desired_airline(offer: Offer, desired_airlines: dict[str, int]):
     return any(
         s.marketing_carrier.name in desired_airlines
@@ -301,29 +437,148 @@ def offer_is_desired_airline(offer: Offer, desired_airlines: dict[str, int]):
         for s in offer.slices[0].segments
     )
 
-class OfferMetrics:
+def offer_time_of_days(offers: list[Offer]):
+    return [
+        TimeOfDay.map_time(s.departing_at.time(), s.arriving_at.time())
+        for o in offers
+        for s in o.slices[0].segments
+    ]
 
+def offer_time_of_day_score(offers: list[Offer], time_of_day_order: list[TimeOfDay]):
+    segments = [s for o in offers for s in o.slices[0].segments]
+
+    weights_from_order = OrderedDict({
+        time_of_day: len(time_of_day_order) / (i+1)
+        for i, time_of_day in enumerate(time_of_day_order)
+    })
+    scores = []
+    for s in segments:
+        depart_time = s.departing_at.time()
+        arrive_time = s.arriving_at.time()
+        time_of_day = TimeOfDay.map_time(depart_time, arrive_time)
+        scores.append(weights_from_order[time_of_day])
+    return np.average(scores)
+
+def offers_nstops_score(
+    offers,
+    soft_max_stops,
+    hard_max_stops,
+    decay_start_value=0.75
+):
+    return nonlinear_cost_mapping(
+        sum(
+            len(o.slices[0].segments) - 1
+            for o in offers
+        ),
+        soft_max_stops,
+        hard_max_stops,
+        decay_start_value
+    )
+
+def offers_layover_duration_score(
+    offers,
+    hard_min_layover_duration,
+    soft_min_layover_duration,
+    soft_max_layover_duration,
+    hard_max_layover_duration
+):
+    layover_duration_scores = []
+    for o in offers:
+        if len(o.slices[0].segments) > 1:
+            layover_durations = [
+                (s.arriving_at - s.departing_at).total_seconds()
+                for s in o.slices[0].segments[:-1]
+            ]
+            layover_duration_scores.extend([
+                inverse_nonlinear_cost_mapping_4_phase(
+                    ld,
+                    soft_min_layover_duration.total_seconds(),
+                    hard_min_layover_duration.total_seconds(),
+                    soft_max_layover_duration.total_seconds(),
+                    hard_max_layover_duration.total_seconds(),
+                )
+                for ld in layover_durations
+            ])
+        else:
+            layover_duration_scores.append(0)
+    return np.average(layover_duration_scores)
+
+def offers_layover_durations(offers):
+    layover_durations = []
+    for o in offers:
+        if len(o.slices[0].segments) > 1:
+            layover_durations.extend([
+                (s.arriving_at - s.departing_at).total_seconds() / 3600
+                for s in o.slices[0].segments[:-1]
+            ])
+        else:
+            layover_durations.append(0)
+    return layover_durations
+
+def offers_nstops(offers):
+    return sum(len(o.slices[0].segments) - 1 for o in offers)
+
+class OfferMetrics:
     def __init__(self, compound_offer: list[Offer], flight_preferences: UserFlightPreferences):
         self.compound_offer = compound_offer
         self.flight_preferences = flight_preferences
 
-    def sort_functions(self):
-        return [
-            lambda offers: sum(float(o.total_amount) for o in offers),
+    @property
+    def display_metric_functions(self):
+        return {
+            "total_cost": lambda offers: sum(float(o.total_amount) for o in offers),
             # TODO is offer.total_duration available?
-            lambda offers: max(offer_total_duration(o) for o in offers),
-            lambda offers: sum(
+            "max_total_duration": lambda offers: max(offer_total_duration(o) for o in offers),
+            "time_of_days": lambda offers: [str(td) for td in offer_time_of_days(offers)],
+            "is_preferred_airline": lambda offers: [
+                offer_is_desired_airline(o, self.flight_preferences.airline_preferences)
+                for o in offers
+            ],
+            "layover_durations": offers_layover_durations,
+            "nstops": offers_nstops
+        }
+    @property
+    def sort_functions(self):
+        return {
+            "total_cost": lambda offers: offers_total_cost_score(offers, self.flight_preferences.soft_max_cost, self.flight_preferences.hard_max_cost),
+            # TODO is offer.total_duration available?
+            "total_duration": lambda offers: offers_total_duration_score(offers, self.flight_preferences.soft_max_duration, self.flight_preferences.hard_max_duration),
+            "time_of_day": lambda offers: offer_time_of_day_score(offers, self.flight_preferences.time_of_day_order),
+            "preferred_airline_ratio": lambda offers: sum(
                 offer_is_desired_airline(o, self.flight_preferences.airline_preferences)
                 for o in offers
             ) / len(offers),
-        ]
+            "layover_duration": lambda offers: offers_layover_duration_score(
+                offers,
+                self.flight_preferences.hard_min_layover_duration,
+                self.flight_preferences.soft_min_layover_duration,
+                self.flight_preferences.soft_max_layover_duration,
+                self.flight_preferences.hard_max_layover_duration),
+            "nstops": lambda offers: offers_nstops_score(offers, self.flight_preferences.soft_max_stops, self.flight_preferences.hard_max_stops),
+        }
     def __repr__(self):
-        total_amount, total_duration, airline_preference_ratio = self.metrics
-        return f"OfferMetrics(total_amount=${total_amount}, total_duration={total_duration}, airline_preference_ratio={airline_preference_ratio})"
+        display_metrics = ''.join(['\n    ' + f'{key}={value}' for key, value in self.display_metrics.items()])
+        return f"OfferMetrics({display_metrics})"
+
+    @property
+    def display_metrics(self):
+        return {name: fn(self.compound_offer) for name, fn in self.display_metric_functions.items()}
 
     @property
     def metrics(self):
-        return [fn(self.compound_offer) for fn in self.sort_functions()]
+        return {name: fn(self.compound_offer) for name, fn in self.sort_functions.items()}
+
+    @property
+    def weights(self):
+        return np.array([getattr(self.flight_preferences, f"{key}_weight") for key in self.sort_functions])
+
+    @property
+    def weighted_metrics(self):
+        return self.weights * np.array([fn(self.compound_offer) for fn in self.sort_functions.values()])
+
+    @property
+    def weighted_metrics_sum(self):
+        return sum(self.weighted_metrics)
 
 
 def order_and_remove_flights(
@@ -335,7 +590,7 @@ def order_and_remove_flights(
     for offer in offers:
         if float(offer.total_amount) > flight_preferences.hard_max_cost:
             continue
-        if len(offer.slices) > flight_preferences.max_stops + 1:
+        if len(offer.slices) > flight_preferences.hard_max_stops + 1:
             continue
         assert len(offer.slices) == 1
         segments = offer.slices[0].segments
@@ -347,13 +602,13 @@ def order_and_remove_flights(
                 segments[i+1].departing_at - segments[i].arriving_at
                 for i in range(len(segments)-1)
             ]
-            if any(d < flight_preferences.min_layover_duration for d in layover_durations):
+            if any(d < flight_preferences.hard_min_layover_duration for d in layover_durations):
                 continue
-            if any(d > flight_preferences.max_layover_duration for d in layover_durations):
+            if any(d > flight_preferences.hard_max_layover_duration for d in layover_durations):
                 continue
         possible_offers.append(offer)
     # TODO actually run a constraint optimizer
-    # and for now, sort by some weighted combination of cost, duration, and airline preference
+    # and for now, sort by some weighted combination of flight preference scores
     # instead of just one by one
     if prev_legs:
         compound_offers = []
@@ -365,7 +620,7 @@ def order_and_remove_flights(
     return sorted([
         [co, OfferMetrics(co, flight_preferences)]
         for co in compound_offers
-    ], key=lambda x: x[1].metrics)
+    ], key=lambda x: -x[1].weighted_metrics_sum)
 
 
 if __name__ == "__main__":
@@ -376,7 +631,7 @@ if __name__ == "__main__":
     )
     print(len(compound_offers))
     for i, (compound_offer, metrics) in enumerate(compound_offers):
-        print(f"Compound Offer {i}: ${metrics}")
+        print(f"Compound Offer {i}: {metrics}")
         for j, offer in enumerate(compound_offer):
             print(f"Offer {j}: ${offer.total_amount}")
             for slice in offer.slices:
