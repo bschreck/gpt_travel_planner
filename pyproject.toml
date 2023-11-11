@@ -12,7 +12,8 @@ dependencies = [
     "fire",
     "httpx",
     "haversine",
-    "networkx"
+    "networkx",
+    "python-dotenv"
 ]
 
 [project.optional-dependencies]
