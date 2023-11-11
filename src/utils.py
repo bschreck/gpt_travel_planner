@@ -19,3 +19,4 @@ def persist_to_file(file_name):
         return new_func
 
     return decorator
+

@@ -159,7 +159,7 @@ def persist_to_file(file_name):
     def decorator(original_func):
         try:
             cache = pickle.load(open(file_name, "rb"))
-        except (IOError, ValueError):
+        except (IOError, ValueError, AttributeError):
             cache = {}
 
         def new_func(*args, **kwargs):
@@ -174,6 +174,7 @@ def persist_to_file(file_name):
     return decorator
 
 
+# TODO lru_cache with timeout
 @persist_to_file("flight_picker_cache.pickle")
 def search_flights(
     flight: DesiredFlightLeg,
@@ -195,10 +196,22 @@ def search_flights(
         duffel_passengers = [p.to_duffel_dict() for p in passengers]
 
 
+    return (
+        duffel.offer_requests.create()
+            .cabin_class(str(cabin_class))
+            .max_connections(max_connections)
+            .passengers(duffel_passengers)
+            .slices([
+                flight.to_duffel_slice()
+            ])
+            .return_offers()
+            .execute()
+    )
     @retry(
         wait=wait_random_exponential(multiplier=1, max=64),
         stop=stop_after_attempt(10),
-        retry=retry_if_exception_type((ApiError, HTTPError)),
+        retry=retry_if_exception_type(HTTPError),
+        # TODO retry on specific ApiErrors
     )
     def reqfn():
         return (
@@ -240,10 +253,12 @@ def find_and_select_flights(
         additional_passengers = []
     ordered_possible_flights = []
     for i, leg in enumerate(flight_legs):
+        print("searching leg", i)
         offer_return = search_flights(
             leg,
             passengers=[user.passenger_info] + additional_passengers,
         )
+        print(f"found {len(offer_return.offers)} offers")
         partial_offer_id = offer_return.id
         # have to show
         # slices[].segments[].operating_carrier.name
@@ -457,7 +472,7 @@ def offer_time_of_day_score(offers: list[Offer], time_of_day_order: list[TimeOfD
         arrive_time = s.arriving_at.time()
         time_of_day = TimeOfDay.map_time(depart_time, arrive_time)
         scores.append(weights_from_order[time_of_day])
-    return np.average(scores)
+    return np.average(scores) / len(time_of_day_order)
 
 def offers_nstops_score(
     offers,
@@ -501,6 +516,7 @@ def offers_layover_duration_score(
             ])
         else:
             layover_duration_scores.append(0)
+    # TODO does this need to be scaled to 0,1?
     return np.average(layover_duration_scores)
 
 def offers_layover_durations(offers):
@@ -528,7 +544,7 @@ class OfferMetrics:
         return {
             "total_cost": lambda offers: sum(float(o.total_amount) for o in offers),
             # TODO is offer.total_duration available?
-            "max_total_duration": lambda offers: max(offer_total_duration(o) for o in offers),
+            "max_total_duration": lambda offers: max(offer_total_duration(o).total_seconds() / 3600 for o in offers),
             "time_of_days": lambda offers: [str(td) for td in offer_time_of_days(offers)],
             "is_preferred_airline": lambda offers: [
                 offer_is_desired_airline(o, self.flight_preferences.airline_preferences)
@@ -623,20 +639,55 @@ def order_and_remove_flights(
     ], key=lambda x: -x[1].weighted_metrics_sum)
 
 
+def offer_to_json(offer: Offer) -> dict:
+    return {
+        "total_amount": float(offer.total_amount),
+        "slices": [
+            {
+                "segments": [
+                    {
+                        "origin": segment.origin.iata_code,
+                        "destination": segment.destination.iata_code,
+                        "departing_at": segment.departing_at.isoformat(),
+                        "arriving_at": segment.arriving_at.isoformat(),
+                        "operating_carrier": segment.operating_carrier.name,
+                        "marketing_carrier": segment.marketing_carrier.name,
+                        "duration": (segment.arriving_at - segment.departing_at).total_seconds(),
+                    }
+                    for segment in slice.segments
+                ]
+            }
+            for slice in offer.slices
+        ]
+    }
+
+def compound_offers_with_metrics_to_json(compound_offers_with_metrics) -> list[dict]:
+    compound_offers_as_dicts = []
+    for compound_offer, metrics in compound_offers_with_metrics:
+        compound_offers_as_dicts.append({
+            "metrics": metrics.metrics,
+            "display_metrics": metrics.display_metrics,
+            "offers": [offer_to_json(o) for o in compound_offer],
+        })
+    return compound_offers_as_dicts
+
 if __name__ == "__main__":
     user, flight_legs = seed_data()
     compound_offers = find_and_select_flights(
         user=user,
         flight_legs=flight_legs,
+        max_flights_to_return=10,
     )
-    print(len(compound_offers))
-    for i, (compound_offer, metrics) in enumerate(compound_offers):
-        print(f"Compound Offer {i}: {metrics}")
-        for j, offer in enumerate(compound_offer):
-            print(f"Offer {j}: ${offer.total_amount}")
-            for slice in offer.slices:
-                print(f"{slice.origin.iata_city_code} -> {slice.destination.iata_city_code}")
-                print(f"Segments: {len(slice.segments)}")
-                for segment in slice.segments:
-                    print(f"{segment.operating_carrier.name}, marketed by {segment.marketing_carrier.name}")
-                    print(f"{segment.origin.iata_code} {segment.departing_at} -> {segment.destination.iata_code} {segment.arriving_at}")
+    compound_offers_as_dicts = compound_offers_with_metrics_to_json(compound_offers)
+    print(compound_offers_as_dicts[0])
+    #  for i, (compound_offer, metrics) in enumerate(compound_offers):
+        #  print(f"Compound Offer {i}: {metrics}")
+        #  for j, offer in enumerate(compound_offer):
+            #  print(offer.to_json())
+            #  print(f"Offer {j}: ${offer.total_amount}")
+            #  for slice in offer.slices:
+                #  print(f"{slice.origin.iata_city_code} -> {slice.destination.iata_city_code}")
+                #  print(f"Segments: {len(slice.segments)}")
+                #  for segment in slice.segments:
+                    #  print(f"{segment.operating_carrier.name}, marketed by {segment.marketing_carrier.name}")
+                    #  print(f"{segment.origin.iata_code} {segment.departing_at} -> {segment.destination.iata_code} {segment.arriving_at}")
