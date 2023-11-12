@@ -139,7 +139,7 @@ def test_schedule_trip():
             },
         ],
     }
-    response = requests.post("http://localhost:8080", json=data)
+    response = requests.post("https://schedule-trip-dbzvk7hepq-uw.a.run.app", json=data)
     assert response.status_code == 200
     # TODO result in non-deterministic
     assert response.json() == [
