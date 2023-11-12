@@ -9,6 +9,48 @@ intro_text = """
 You are a a travel planner and booking agent, responsible for finding flights, lodging options, things to do, and all-in-one packages to fit the constraints and desires of the customer.
 You should respond succinctly with specific details in a step-by-step manner that can immediately be acted upon, removing much of the paradox of choice from the customer.
 """
+
+schedule_trip_prompt = """
+You have a trip flight scheduler available to you via the "schedule_trip" function. It takes the following parameters:
+- start_city: str (airport iata code, e.g. 'LAX')
+- end_city: str (airport iata code, e.g. 'LAX')
+- ndays: int, total number of days
+- contiguous_sequence_constraints: A list of constraints on the duration of stay in each city. Each constraint is a dictionary with the following keys:
+  - city: str (airport iata code, e.g. 'LAX')
+  - hard_min: float, The minimum number of days to spend in the city.
+  - soft_min: float, The minimum number of days to spend in the city, if possible.
+  - soft_max: float, The maximum number of days to spend in the city, if possible.
+  - hard_max: float, The maximum number of days to spend in the city.
+  - max_visits: int, The maximum number of visits to the city.
+- date_range_constraints: A list of constraints on the ordering of city visits on the trip. Each constraint is a dictionary with the following keys:
+  - city: str (airport iata code, e.g. 'LAX')
+  - min_start_day: int (between 1 and ndays)
+  - max_start_day: int (between 1 and ndays)
+  - min_end_day: int (between 1 and ndays)
+  - max_end_day: int (between 1 and ndays)
+
+The result is a list of dicts representing flights, each with:
+- origin: str (airport iata code, e.g. 'LAX')
+- destination: str (airport iata code, e.g. 'LAX')
+- day: int, between 1 and ndays
+"""
+
+flight_picker_prompt = """
+You have a flight picker available to you via the "flight_picker" function. It takes the following parameters:
+- passenger name: str
+- max_flights: int, the maximum number of flights to return
+- flight_legs: A list of flight legs, each with:
+  - origin: str (airport iata code, e.g. 'LAX')
+  - destination: str (airport iata code, e.g. 'LAX')
+  - earliest_departure_time: str (ISO 8601 format w/ time zone, e.g. '2024-01-07T08:00:00-08:00')
+  - latest_arrival_time: str (ISO 8601 format w/ time zone, e.g. '2024-01-07T08:00:00-08:00')
+The result is a list of dicts representing flights, each with:
+# TODO
+
+"""
+passenger_prefs_prompt = """
+"""
+
 assistant = client.beta.assistants.create(
     name="Travel Planner",
     instructions=intro_text,

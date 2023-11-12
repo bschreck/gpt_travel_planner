@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict, fields
 from dotenv import load_dotenv
 from duffel_api import Duffel
 from duffel_api.models import Offer
@@ -11,12 +11,19 @@ from tenacity import (
     wait_random_exponential,
     stop_after_attempt,
 )
+from utils import download_file_from_gcs, upload_file_to_gcs
+from google.api_core.exceptions import NotFound
 from duffel_api.http_client import ApiError
 from requests import HTTPError
 import enum
 from collections import OrderedDict
 import pickle
 import numpy as np
+from config import (
+    DEFAULT_BUCKET,
+    DEFAULT_FLIGHT_PREFERENCES_FILE,
+    DEFAULT_PASSENGER_INFO_FILE,
+)
 
 load_dotenv()
 
@@ -104,6 +111,71 @@ class UserFlightPreferences:
             1,
         )
 
+    def to_json(self):
+        # Convert the dataclass to a dictionary
+        data = asdict(self)
+
+        # Convert enum fields to their string representation
+        data["seat_class_prefernces"] = {
+            k.value: v for k, v in self.seat_class_prefernces.items()
+        }
+        data["seat_location_preference"] = self.seat_location_preference.value
+        data["seat_location_row_preference"] = self.seat_location_row_preference.value
+
+        # Convert timedelta fields to total seconds
+        for key, value in data.items():
+            if isinstance(value, datetime.timedelta):
+                data[key] = value.total_seconds()
+
+        # Convert list of TimeOfDay enum values to list of strings
+        data["time_of_day_order"] = [time.value for time in self.time_of_day_order]
+
+        return data
+
+    @classmethod
+    def from_json(cls, data: dict) -> "UserFlightPreferences":
+        data = data.copy()
+        # Convert strings back to enum values for SeatClass, SeatRow, and SeatLocation
+        data["seat_class_prefernces"] = {
+            SeatClass(k): v for k, v in data["seat_class_prefernces"].items()
+        }
+        data["seat_location_preference"] = SeatLocation(
+            data["seat_location_preference"]
+        )
+        data["seat_location_row_preference"] = SeatRow(
+            data["seat_location_row_preference"]
+        )
+
+        # Convert numerical values back to timedelta objects
+        timedelta_keys = [
+            "soft_max_duration",
+            "hard_max_duration",
+            "soft_min_layover_duration",
+            "hard_min_layover_duration",
+            "soft_max_layover_duration",
+            "hard_max_layover_duration",
+        ]
+        for key in timedelta_keys:
+            if key in data:
+                data[key] = datetime.timedelta(seconds=data[key])
+
+        # Convert list of strings back to list of TimeOfDay enum values
+        data["time_of_day_order"] = [
+            TimeOfDay(time) for time in data["time_of_day_order"]
+        ]
+
+        return cls(**data)
+
+    def merge(self, other: "UserFlightPreferences") -> "UserFlightPreferences":
+        merged_data = asdict(self)
+        merged_data.update(asdict(other))
+        return UserFlightPreferences(**merged_data)
+
+    def merge_from_dict(self, other: dict) -> "UserFlightPreferences":
+        merged_data = asdict(self)
+        merged_data.update(other)
+        return UserFlightPreferences(**merged_data)
+
 
 class PassengerType(enum.StrEnum):
     ADULT = "adult"
@@ -119,7 +191,7 @@ class PassengerInfo:
     name: str
     date_of_birth: datetime.date
     phone_number: str
-    email: str
+    email: str | None = None
     age: int | None = None
     ptype: PassengerType = PassengerType.ADULT
 
@@ -132,15 +204,38 @@ class PassengerInfo:
         if self.age:
             d["age"] = self.age
         else:
-            d["type"] = self(self.ptype)
+            d["type"] = self.ptype.value
         return d
+
+    def to_json(self):
+        data = asdict(self)
+        data["date_of_birth"] = self.date_of_birth.isoformat()
+        data["ptype"] = self.ptype.value
+        return data
+
+    @classmethod
+    def from_json(cls, data: dict) -> "PassengerInfo":
+        data = data.copy()
+        data["date_of_birth"] = datetime.date.fromisoformat(data["date_of_birth"])
+        data["ptype"] = PassengerType(data["ptype"])
+        return cls(**data)
+
+    def merge(self, other: "PassengerInfo") -> "PassengerInfo":
+        merged_data = asdict(self)
+        merged_data.update(asdict(other))
+        return PassengerInfo(**merged_data)
+
+    def merge_from_dict(self, other: dict) -> "PassengerInfo":
+        merged_data = asdict(self)
+        merged_data.update(other)
+        return PassengerInfo(**merged_data)
 
 
 @dataclass
 class User:
-    email: str
     passenger_info: PassengerInfo
     flight_preferences: UserFlightPreferences
+    email: str | None = None
 
 
 @dataclass
@@ -166,6 +261,131 @@ class DesiredFlightLeg:
                 self.latest_arrival_time,
             )
         )
+
+
+def parse_flight_preferences(request: dict) -> UserFlightPreferences:
+    if "passenger_name" not in request:
+        return None, None
+    passenger_name = request["passenger_name"]
+    try:
+        passenger_prefs = UserFlightPreferences.from_json(request["preferences"])
+    except KeyError:
+        passenger_prefs = request["preferences"]
+    return passenger_name, passenger_prefs
+
+
+def create_flight_preferences_file(filename=None, bucket=None):
+    flight_preferences = {}
+    with open(filename, "wb") as f:
+        pickle.dump(flight_preferences, f)
+    upload_file_to_gcs(filename, filename, bucket_name=bucket)
+
+
+def create_passenger_info_file(filename=None, bucket=None):
+    passenger_info = {}
+    with open(filename, "wb") as f:
+        pickle.dump(passenger_info, f)
+    upload_file_to_gcs(filename, filename, bucket_name=bucket)
+
+
+def get_all_flight_preferences(filename=None, bucket=None):
+    if filename is None:
+        filename = DEFAULT_FLIGHT_PREFERENCES_FILE
+    if bucket is None:
+        bucket = DEFAULT_BUCKET
+    try:
+        download_file_from_gcs(filename, filename, bucket_name=bucket)
+    except NotFound:
+        create_flight_preferences_file(filename, bucket)
+    with open(filename, "rb") as f:
+        all_flight_prefs = pickle.load(f)
+    return all_flight_prefs
+
+
+def get_flight_preferences(passenger_name, filename=None, bucket=None):
+    return get_all_flight_preferences(filename, bucket).get(passenger_name, None)
+
+
+def parse_passenger_info(request: dict) -> PassengerInfo:
+    if "passenger_name" not in request:
+        return None, None
+    passenger_name = request["passenger_name"]
+    try:
+        passenger_info = PassengerInfo.from_json(request["passenger_info"])
+    except KeyError as e:
+        passenger_info = request["passenger_info"]
+    return passenger_name, passenger_info
+
+
+def get_all_passenger_info(filename=None, bucket=None):
+    if filename is None:
+        filename = DEFAULT_PASSENGER_INFO_FILE
+    if bucket is None:
+        bucket = DEFAULT_BUCKET
+    try:
+        download_file_from_gcs(filename, filename, bucket_name=bucket)
+    except NotFound:
+        create_passenger_info_file(filename, bucket)
+    with open(filename, "rb") as f:
+        all_passengers = pickle.load(f)
+    return all_passengers
+
+
+def get_passenger_info(passenger_name, filename=None, bucket=None):
+    all_passengers = get_all_passenger_info(filename, bucket)
+    return all_passengers.get(passenger_name, None)
+
+
+def set_flight_preferences(
+    passenger_name: str,
+    passenger_prefs: dict | UserFlightPreferences,
+    filename=None,
+    bucket=None,
+):
+    all_flight_prefs = get_all_flight_preferences(filename, bucket)
+    existing_passenger_prefs = all_flight_prefs.get(passenger_name, None)
+    if existing_passenger_prefs:
+        if isinstance(passenger_prefs, UserFlightPreferences):
+            passenger_prefs = existing_passenger_prefs.merge(passenger_prefs)
+        else:
+            passenger_prefs = existing_passenger_prefs.merge_from_dict(passenger_prefs)
+    elif not isinstance(passenger_prefs, UserFlightPreferences):
+        raise ValueError("passenger_prefs must be a UserFlightPreferences object")
+    all_flight_prefs[passenger_name] = passenger_prefs
+    filename = filename or DEFAULT_FLIGHT_PREFERENCES_FILE
+    bucket = bucket or DEFAULT_BUCKET
+    with open(filename, "wb") as f:
+        pickle.dump(all_flight_prefs, f)
+    upload_file_to_gcs(filename, filename, bucket_name=bucket)
+
+
+def set_passenger_info(
+    passenger_name: str,
+    passenger_info: dict | PassengerInfo,
+    filename=None,
+    bucket=None,
+):
+    all_passengers = get_all_passenger_info(filename, bucket)
+    existing_passenger_info = all_passengers.get(passenger_name, None)
+    if existing_passenger_info:
+        if isinstance(passenger_info, PassengerInfo):
+            passenger_info = existing_passenger_info.merge(passenger_info)
+        else:
+            passenger_info = existing_passenger_info.merge_from_dict(passenger_info)
+    elif not isinstance(passenger_info, PassengerInfo):
+        raise ValueError("passenger_info must be a PassengerInfo object")
+    all_passengers[passenger_name] = passenger_info
+    filename = filename or DEFAULT_PASSENGER_INFO_FILE
+    bucket = bucket or DEFAULT_BUCKET
+    with open(filename, "wb") as f:
+        pickle.dump(all_passengers, f)
+    upload_file_to_gcs(filename, filename, bucket_name=bucket)
+
+
+def get_user(passenger_name: str, filename=None, bucket=None):
+    flight_preferences = get_flight_preferences(passenger_name, filename, bucket)
+    passenger_info = get_passenger_info(passenger_name, filename, bucket)
+    return User(passenger_info, flight_preferences)
 
 
 def persist_to_file(file_name):

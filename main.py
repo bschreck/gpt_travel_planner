@@ -9,6 +9,13 @@ from flight_picker import (
     compound_offers_with_metrics_to_json,
     DesiredFlightLeg,
     UserFlightPreferences,
+    set_flight_preferences as internal_set_flight_preferences,
+    get_flight_preferences as internal_get_flight_preferences,
+    get_user,
+    parse_flight_preferences,
+    parse_passenger_info,
+    set_passenger_info as internal_set_passenger_info,
+    get_passenger_info as internal_get_passenger_info,
 )
 from scheduler import Scheduler, ContiguousSequenceConstraint, DateRangeConstraint
 from src.get_flight_data import (
@@ -19,11 +26,7 @@ from src.utils import upload_file_to_gcs
 import pickle
 import os
 from dataclasses import dataclass
-
-DEFAULT_BUCKET = os.environ.get("BUCKET", "gpt-travel-planner-data")
-DEFAULT_FLIGHTS_FILE = os.environ.get(
-    "DEFAULT_FLIGHTS_FILE", "2023-11-11/flights.pickle"
-)
+from config import DEFAULT_BUCKET, DEFAULT_FLIGHTS_FILE
 
 
 def parse_pick_flights_json(
@@ -33,9 +36,9 @@ def parse_pick_flights_json(
     Args:
         request_json (dict): The request JSON.
     Returns:
-        The user ID, flight legs, and max flights.
+        The passenger_name, flight legs, and max flights.
     """
-    user_id = request_json["user_id"]
+    passenger_name = request_json["passenger_name"]
     flight_legs = [
         DesiredFlightLeg(
             origin=flight_leg["origin"],
@@ -46,28 +49,51 @@ def parse_pick_flights_json(
         for flight_leg in request_json["flight_legs"]
     ]
     max_flights = request_json["max_flights"]
-    return user_id, flight_legs, max_flights
+    return passenger_name, flight_legs, max_flights
 
 
-def get_user(user_id: str) -> UserFlightPreferences:
-    user, flight_legs = seed_data()
-    return user
+def set_flight_preferences(request):
+    passenger_name, passenger_prefs = parse_flight_preferences(
+        request.get_json(silent=True)
+    )
+    if not passenger_name:
+        return ("passenger_name is required", 400, {})
+    internal_set_flight_preferences(passenger_name, passenger_prefs)
+    return ("", 200, {})
 
 
-@functions_framework.http
+def get_flight_preferences(request):
+    passenger_name = request.args.get("passenger_name")
+    if not passenger_name:
+        return ("passenger_name is required", 400, {})
+    passenger_prefs = internal_get_flight_preferences(passenger_name)
+    if passenger_prefs is None:
+        return ("passenger_name not found", 404, {})
+    return (passenger_prefs.to_json(), 200, {})
+
+
+def set_passenger_info(request):
+    passenger_name, passenger_info = parse_passenger_info(request.get_json(silent=True))
+    if not passenger_name:
+        return ("passenger_name is required", 400, {})
+    internal_set_passenger_info(passenger_name, passenger_info)
+    return ("", 200, {})
+
+
+def get_passenger_info(request):
+    passenger_name = request.args.get("passenger_name")
+    if not passenger_name:
+        return ("passenger_name is required", 400, {})
+    passenger_info = internal_get_passenger_info(passenger_name)
+    if passenger_info is None:
+        return ("passenger_name not found", 404, {})
+    return (passenger_info.to_json(), 200, {})
+
+
 def pick_flights(request):
-    """Flight Picker HTTP Cloud Function
-    Args:
-        request (flask.Request): The request object.
-        <https://flask.palletsprojects.com/en/1.1.x/api/#incoming-request-data>
-    Returns:
-        The response text, or any set of values that can be turned into a
-        Response object using `make_response`
-        <https://flask.palletsprojects.com/en/1.1.x/api/#flask.make_response>.
-    """
     request_json = request.get_json(silent=True)
-    user_id, flight_legs, max_flights = parse_pick_flights_json(request_json)
-    user = get_user(user_id)
+    passenger_name, flight_legs, max_flights = parse_pick_flights_json(request_json)
+    user = get_user(passenger_name)
     flights = find_and_select_flights(
         user=user, flight_legs=flight_legs, max_flights_to_return=max_flights
     )
@@ -147,7 +173,6 @@ def parse_schedule_trip_json(request_json: dict) -> ScheduleTripParams:
     )
 
 
-@functions_framework.http
 def schedule_trip(request):
     params = parse_schedule_trip_json(request.get_json(silent=True))
     print("building flight costs")
@@ -175,3 +200,24 @@ def schedule_trip(request):
     result_records = scheduler.get_result_flight_records()
 
     return (result_records, 200, {})
+
+
+@functions_framework.http
+def functions_entrypoint(request):
+    function = request.args.get("function")
+    if function is None:
+        return ("function is required", 400, {})
+    if function == "set_flight_preferences":
+        return set_flight_preferences(request)
+    elif function == "get_flight_preferences":
+        return get_flight_preferences(request)
+    elif function == "set_passenger_info":
+        return set_passenger_info(request)
+    elif function == "get_passenger_info":
+        return get_passenger_info(request)
+    elif function == "pick_flights":
+        return pick_flights(request)
+    elif function == "schedule_trip":
+        return schedule_trip(request)
+    else:
+        return (f"function {function} not found", 404, {})
