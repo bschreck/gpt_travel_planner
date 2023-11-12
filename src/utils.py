@@ -1,4 +1,18 @@
 import pickle
+from google.cloud import storage
+from google.oauth2 import service_account
+
+
+def upload_file_to_gcs(local_file_path, remote_file_path, bucket_name):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    bucket.blob(remote_file_path).upload_from_filename(local_file_path)
+
+def download_file_from_gcs(remote_file_path, local_file_path, bucket_name):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    bucket.blob(remote_file_path).download_to_filename(local_file_path)
+
 
 def persist_to_file(file_name):
 

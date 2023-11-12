@@ -22,6 +22,8 @@ from heapq import heappush, heappop
 from functools import cache
 from utils import persist_to_file
 from shift_scheduling_app import add_soft_sequence_constraint
+from get_flight_data import build_flight_costs, build_flight_costs_from_remote_file
+import pickle
 
 @cache
 def flight_data():
@@ -659,18 +661,37 @@ if __name__ == '__main__':
         ('SJD', 'MEX'): 2,
         ('MEX', 'SJD'): 2,
     }
+    bucket = "gpt-travel-planner-data"
+    today = pd.Timestamp.today().strftime("%Y-%m-%d")
+    #flight_costs = build_flight_costs_from_remote_file(bucket, f'daily_flights_{today}.pickle')
+    with open('flights.pickle', 'rb') as f:
+        flights = pickle.load(f)
+    flight_costs = build_flight_costs(flights)
 
 
     # (city, hard_min, soft_min, min_cost, hard_max, soft_max, max_cost, max_visits)
+    #  contiguous_sequence_contraints = [
+        #  ('MEX', 7, 10, 100, 10, 7, 100, 2),
+        #  ('OAX', 5, 7, 100, 7,  7, 100, 1),
+        #  ('MGA', 6, 7, 100, 7,  7, 100, 1),
+        #  ('SJD', 3, 4, 100, 5,  4, 100, 1),
+    #  ]
+
     contiguous_sequence_contraints = [
-        ('MEX', 7, 10, 100, 10, 7, 100, 2),
-        ('OAX', 5, 7, 100, 7,  7, 100, 1),
-        ('MGA', 6, 7, 100, 7,  7, 100, 1),
-        ('SJD', 3, 4, 100, 5,  4, 100, 1),
+        ('SLC', 7, 10, 100, 30, 7, 100, 2),
+        #('SEA', 5, 7, 100, 7,  7, 100, 1),
+        #('ORD', 6, 7, 100, 7,  7, 100, 1),
+        ('MEX', 3, 4, 100, 5,  4, 100, 1),
     ]
+    start_city, end_city = 'LAX', 'LAX'
+    relevant_cities = set([start_city, end_city] + [sc[0] for sc in contiguous_sequence_contraints])
+    flight_costs = {
+        (o, d): c
+        for (o, d), c in flight_costs.items()
+        if o in relevant_cities or d in relevant_cities
+    }
     max_visits = {city: max_visit for city, _, _, _, _, _, _, max_visit in contiguous_sequence_contraints}
 
-    start_city, end_city = 'LAX', 'LAX'
     ndays = 31
 
     model, flight_vars, days_in_city = create_solver_input_simple(flight_costs, 1, ndays, max_visits)

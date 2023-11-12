@@ -14,7 +14,8 @@ dependencies = [
     "haversine",
     "networkx",
     "python-dotenv",
-    "functions-framework==3.*"
+    "functions-framework==3.*",
+    "google-cloud-storage",
 ]
 
 [project.optional-dependencies]

@@ -10,6 +10,10 @@ from flight_picker import (
     DesiredFlightLeg,
     UserFlightPreferences,
 )
+from src.get_flight_data import get_daily_flights_crawl_multithreaded
+from src.utils import upload_file_to_gcs
+import pickle
+
 def parse_request_json(request_json: dict) -> tuple[str, list[DesiredFlightLeg], int]:
     """Parse the request JSON into the user ID, flight legs, and max flights.
     Args:
@@ -74,3 +78,31 @@ def pick_flights(request):
     headers = {"Access-Control-Allow-Origin": "*"}
 
     return (compound_offers_with_metrics_to_json(flights), 200, headers)
+
+@functions_framework.http
+def download_flight_data(request):
+    bucket = request.args.get("bucket", "gpt-travel-planner-data")
+    today = pd.Timestamp.today().strftime("%Y-%m-%d")
+    filename = request.args.get("filename", f"daily_flights_{today}.pickle")
+
+    tmp_output_file = f"daily_flights_tmp_{today}.pickle"
+
+    status = 500
+    try:
+        get_daily_flights_crawl_multithreaded(
+            max_total_calls=request.args.get("max_total_calls", 100),
+            output_file=tmp_output_file,
+        )
+    except Exception as e:
+        print(e)
+        upload_file_to_gcs(tmp_output_file, filename, bucket)
+    else:
+        local_output_file = f"daily_flights_{today}.pickle"
+        # TODO: upload object straight to GCS
+        with open(local_output_file, 'wb') as f:
+            pickle.dump(flights, f)
+        upload_file_to_gcs(local_output_file, filename, bucket)
+        status = 200
+
+    return ("done", status, {})
+
