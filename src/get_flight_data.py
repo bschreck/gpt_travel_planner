@@ -51,17 +51,12 @@ os.environ['AVIATIONSTACK_API_KEY2']})
                         known_airports.add(flight['arrival']['iata'])
                     airport_queue.put(flight['arrival']['iata'])
 
-        print("got data")
         if lock is not None:
-            print("attempting lock")
             with lock:
-                print("got lock")
                 with open(output_file, 'wb') as f:
                     pickle.dump(data, f)
                 if bucket is not None:
-                    print("bucket is not none")
                     upload_file_to_gcs(output_file, output_file, bucket)
-                    print("uploaded")
 
         count = resp.json()['pagination']['count']
         if count < limit:
