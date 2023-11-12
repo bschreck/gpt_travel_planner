@@ -1,12 +1,9 @@
 name: Get Flight Data
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  schedule:
+    - cron: '0 0 * * *' # Runs at midnight every day
+  workflow_dispatch:
 
 jobs:
   build-and-run:
