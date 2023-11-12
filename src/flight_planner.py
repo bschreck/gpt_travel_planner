@@ -663,10 +663,12 @@ if __name__ == '__main__':
     }
     bucket = "gpt-travel-planner-data"
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
-    #flight_costs = build_flight_costs_from_remote_file(bucket, f'daily_flights_{today}.pickle')
-    with open('flights.pickle', 'rb') as f:
-        flights = pickle.load(f)
-    flight_costs = build_flight_costs(flights)
+    flight_costs = build_flight_costs_from_remote_file(bucket, f'{today}/flights.pickle')
+    #flight_costs = build_flight_costs_from_remote_file(bucket, f'flights.pickle')
+    breakpoint()
+    #with open('flights.pickle', 'rb') as f:
+    #    flights = pickle.load(f)
+    #flight_costs = build_flight_costs(flights)
 
 
     # (city, hard_min, soft_min, min_cost, hard_max, soft_max, max_cost, max_visits)

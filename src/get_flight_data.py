@@ -8,13 +8,24 @@ import sys
 import pickle
 import fire
 import pandas as pd
-from utils import upload_file_to_gcs
+from utils import upload_file_to_gcs, download_file_from_gcs
 
-@retry(
-    stop=stop_after_attempt(10),
-    #wait=wait_random_exponential(multiplier=1, max=64)
-    wait=wait_fixed(1)
-)
+def open_and_save_new_data(new_data, output_file, bucket):
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    try:
+        with open(output_file, 'rb') as f:
+            existing_data = pickle.load(f)
+    except (IOError, ValueError):
+        existing_data = []
+    with open(output_file, 'wb') as f:
+        pickle.dump(new_data + existing_data, f)
+    if bucket is not None:
+        upload_file_to_gcs(output_file, output_file, bucket)
+#@retry(
+#    stop=stop_after_attempt(10),
+#    #wait=wait_random_exponential(multiplier=1, max=64)
+#    wait=wait_fixed(1)
+#)
 def get_daily_flights_from(airport, max_calls=100,
                            lock=None,
                            airport_queue=None,
@@ -23,23 +34,19 @@ def get_daily_flights_from(airport, max_calls=100,
                            bucket=None):
     offset = 0
     today = datetime.datetime.today().strftime('%Y-%m-%d')
-    dates = set([today])
     data = []
     limit = 100
     seen_flight_numbers = set()
     ncalls = 0
-    while len(dates) == 1 and ncalls < max_calls:
-        resp = requests.get('http://api.aviationstack.com/v1/flights', {'offset': offset, 'limit': limit, 'dep_iata': airport, 'access_key':
-os.environ['AVIATIONSTACK_API_KEY2']})
+    while ncalls < max_calls:
+        resp = requests.get('http://api.aviationstack.com/v1/routes', {'offset': offset, 'limit': limit, 'dep_iata': airport, 'access_key':
+os.environ['AVIATIONSTACK_API_KEY']})
         resp.raise_for_status()
         ncalls += 1
         sys.stdout.flush()
-        dates = dates | set(d['flight_date'] for d in resp.json()['data'])
         new_data = []
         for d in resp.json()['data']:
             if d['flight']['number'] in seen_flight_numbers:
-                continue
-            if d['flight_date'] != today:
                 continue
             seen_flight_numbers.add(d['flight']['number'])
             new_data.append(d)
@@ -53,10 +60,7 @@ os.environ['AVIATIONSTACK_API_KEY2']})
 
         if lock is not None:
             with lock:
-                with open(output_file, 'wb') as f:
-                    pickle.dump(data, f)
-                if bucket is not None:
-                    upload_file_to_gcs(output_file, output_file, bucket)
+                open_and_save_new_data(data, output_file, bucket)
 
         count = resp.json()['pagination']['count']
         if count < limit:
@@ -76,8 +80,7 @@ def get_daily_flights_crawl(start_airport='LAX', max_total_calls=100, output_fil
             flights, ncalls = get_daily_flights_from(cur_airport, max_calls=max_total_calls - total_calls)
         except RetryError:
             return all_flights
-        with open(output_file, 'wb') as f:
-            pickle.dump(all_flights, f)
+        open_and_save_new_data(all_flights, output_file, bucket)
         total_calls += ncalls
         all_flights.extend(flights)
         prev_known_airports = len(known_airports)
@@ -97,7 +100,6 @@ def get_daily_flights_crawl_multithreaded(
     queue = Queue()
     threads = []
     known_airports = set([start_airport])
-    all_flights = []
     total_calls = [0]
 
     def worker():
@@ -125,9 +127,7 @@ def get_daily_flights_crawl_multithreaded(
                 sys.stdout.flush()
                 with lock:
                     sys.stdout.flush()
-                    all_flights.extend(flights)
-                    with open(output_file, 'wb') as f:
-                        pickle.dump(all_flights, f)
+                    open_and_save_new_data(flights, output_file, bucket)
                     new_airports = set(f['departure']['iata'] for f in flights)
                     total_calls[0] += ncalls
                     for airport in new_airports:
@@ -158,27 +158,26 @@ def get_daily_flights_crawl_multithreaded(
     for t in threads:
         t.join()
 
-    return all_flights
 
-
-def main(max_total_calls: int = 1000, output_file: str = 'flights.pickle', multithreaded: bool = True, bucket: str = None):
+def main(max_total_calls: int = 1000, output_file_basename: str = 'flights.pickle', multithreaded: bool = True, bucket: str = None):
+    today = datetime.datetime.today().strftime('%Y-%m-%d')
+    output_file = f"{today}/{output_file_basename}"
     if multithreaded:
-        flights = get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
+        get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
     else:
-        flights = get_daily_flights_crawl(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
-    if bucket is not None:
-        with open(output_file, 'wb') as f:
-            pickle.dump(flights, f)
-        upload_file_to_gcs(output_file, output_file, bucket)
+        get_daily_flights_crawl(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
 
 
 def build_flight_costs(flights):
     flight_costs = {}
     for flight in flights:
         departure, arrival = flight['departure']['iata'], flight['arrival']['iata']
-        arrival_time = pd.Timestamp(flight['arrival']['scheduled'])
-        departure_time = pd.Timestamp(flight['departure']['scheduled'])
+        arrival_time = pd.Timestamp(flight['arrival']['time'])
+        departure_time = pd.Timestamp(flight['departure']['time'])
         duration = arrival_time - departure_time
+        if duration < pd.Timedelta(0):
+            arrival_time += pd.Timedelta(1, unit='d')
+            duration = arrival_time - departure_time
         if (departure, arrival) not in flight_costs:
             flight_costs[(departure, arrival)] = duration.total_seconds() / 3600
             flight_costs[(arrival, departure)] = duration.total_seconds() / 3600

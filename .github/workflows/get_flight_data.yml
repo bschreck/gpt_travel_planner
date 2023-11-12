@@ -2,7 +2,7 @@ name: Get Flight Data
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs at midnight every day
+    - cron: '0 0 * * 5' # Runs at midnight on friday
   workflow_dispatch:
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         python src/get_flight_data.py \
           --max-total-calls 1000 \
           --bucket gpt-travel-planner-data \
-          --output-file flights.pickle
+          --output-file-basename flights.pickle
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         DUFFEL_API_KEY: ${{ secrets.DUFFEL_API_KEY }}
