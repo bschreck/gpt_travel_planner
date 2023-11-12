@@ -29,12 +29,10 @@ def get_daily_flights_from(airport, max_calls=100,
     seen_flight_numbers = set()
     ncalls = 0
     while len(dates) == 1 and ncalls < max_calls:
-        print("Getting from offset", offset)
         resp = requests.get('http://api.aviationstack.com/v1/flights', {'offset': offset, 'limit': limit, 'dep_iata': airport, 'access_key':
 os.environ['AVIATIONSTACK_API_KEY']})
         resp.raise_for_status()
         ncalls += 1
-        print(ncalls)
         sys.stdout.flush()
         dates = dates | set(d['flight_date'] for d in resp.json()['data'])
         new_data = []
@@ -70,7 +68,6 @@ def get_daily_flights_crawl(start_airport='LAX', max_total_calls=100, output_fil
     all_flights = []
     total_calls = 0
     while prev_known_airports < len(known_airports) and total_calls < max_total_calls:
-        print("Known airport size:", len(known_airports))
         cur_airport = queue.pop(0)
         try:
             flights, ncalls = get_daily_flights_from(cur_airport, max_calls=max_total_calls - total_calls)
@@ -122,7 +119,6 @@ def get_daily_flights_crawl_multithreaded(
                     print("retry error")
                     break
 
-                print("attempting to get lock")
                 sys.stdout.flush()
                 with lock:
                     sys.stdout.flush()
@@ -163,11 +159,12 @@ def get_daily_flights_crawl_multithreaded(
 
 
 def main(max_total_calls: int = 1000, output_file: str = 'flights.pickle', multithreaded: bool = True, bucket: str = None):
+    print(max_total_calls, output_file, bucket)
+    return
     if multithreaded:
         flights = get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
     else:
         flights = get_daily_flights_crawl(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
-    print(len(flights), "flights")
     if bucket is not None:
         with open(output_file, 'wb') as f:
             pickle.dump(flights, f)
