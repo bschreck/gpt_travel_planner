@@ -30,7 +30,7 @@ def get_daily_flights_from(airport, max_calls=100,
     ncalls = 0
     while len(dates) == 1 and ncalls < max_calls:
         resp = requests.get('http://api.aviationstack.com/v1/flights', {'offset': offset, 'limit': limit, 'dep_iata': airport, 'access_key':
-os.environ['AVIATIONSTACK_API_KEY']})
+os.environ['AVIATIONSTACK_API_KEY2']})
         resp.raise_for_status()
         ncalls += 1
         sys.stdout.flush()
