@@ -2,13 +2,13 @@ import datetime
 import requests
 import threading
 from queue import Queue
-from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_random_exponential, wait_fixed, RetryError
 import os
 import sys
 import pickle
 import fire
 import pandas as pd
-
+from utils import upload_file_to_gcs
 
 @retry(
     stop=stop_after_attempt(10),
@@ -18,7 +18,9 @@ import pandas as pd
 def get_daily_flights_from(airport, max_calls=100,
                            lock=None,
                            airport_queue=None,
-                           known_airports=None):
+                           known_airports=None,
+                           output_file='flights.pickle',
+                           bucket=None):
     offset = 0
     today = datetime.datetime.today().strftime('%Y-%m-%d')
     dates = set([today])
@@ -49,6 +51,10 @@ os.environ['AVIATIONSTACK_API_KEY']})
                 if flight['arrival']['iata'] not in known_airports:
                     with lock:
                         known_airports.add(flight['arrival']['iata'])
+                        with open(output_file, 'wb') as f:
+                            pickle.dump(data, f)
+                        if bucket is not None:
+                            upload_file_to_gcs(output_file, output_file, bucket)
                     airport_queue.put(flight['arrival']['iata'])
 
         count = resp.json()['pagination']['count']
@@ -68,7 +74,7 @@ def get_daily_flights_crawl(start_airport='LAX', max_total_calls=100, output_fil
         cur_airport = queue.pop(0)
         try:
             flights, ncalls = get_daily_flights_from(cur_airport, max_calls=max_total_calls - total_calls)
-        except tenacity.RetryError:
+        except RetryError:
             return all_flights
         with open(output_file, 'wb') as f:
             pickle.dump(all_flights, f)
@@ -84,7 +90,9 @@ def get_daily_flights_crawl(start_airport='LAX', max_total_calls=100, output_fil
 
 
 
-def get_daily_flights_crawl_multithreaded(start_airport='LAX', max_total_calls=100, num_worker_threads=10, output_file='flights.pickle'):
+def get_daily_flights_crawl_multithreaded(
+    start_airport='LAX', max_total_calls=100, num_worker_threads=10, output_file='flights.pickle',
+    bucket=None):
     lock = threading.Lock()
     queue = Queue()
     threads = []
@@ -107,8 +115,10 @@ def get_daily_flights_crawl_multithreaded(start_airport='LAX', max_total_calls=1
                         max_calls=max_total_calls - total_calls[0],
                         airport_queue=queue,
                         known_airports=known_airports,
-                        lock=lock)
-                except tenacity.RetryError:
+                        lock=lock,
+                        output_file=output_file,
+                        bucket=bucket)
+                except RetryError:
                     print("retry error")
                     break
 
@@ -152,14 +162,16 @@ def get_daily_flights_crawl_multithreaded(start_airport='LAX', max_total_calls=1
     return all_flights
 
 
-def main(max_total_calls: int = 1000, output_file: str = 'flights.pickle', multithreaded: bool = True):
+def main(max_total_calls: int = 1000, output_file: str = 'flights.pickle', multithreaded: bool = True, bucket: str = None):
     if multithreaded:
-        flights = get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls, output_file=output_file)
+        flights = get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
     else:
-        flights = get_daily_flights_crawl(max_total_calls=max_total_calls, output_file=output_file)
+        flights = get_daily_flights_crawl(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
     print(len(flights), "flights")
-    with open(output_file, 'wb') as f:
-        pickle.dump(flights, f)
+    if bucket is not None:
+        with open(output_file, 'wb') as f:
+            pickle.dump(flights, f)
+        upload_file_to_gcs(output_file, output_file, bucket)
 
 
 def build_flight_costs(flights):
@@ -182,7 +194,4 @@ def build_flight_costs_from_remote_file(bucket, filename):
 
 
 if __name__ == '__main__':
-    # fire.Fire(main)
-    max_total_calls = 20
-    flights = get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls)
-    print(len(flights), "flights")
+    fire.Fire(main)
