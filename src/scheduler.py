@@ -13,11 +13,11 @@ class ContiguousSequenceConstraint:
     city: str
     hard_min: float
     soft_min: float
-    min_cost: float
     hard_max: float
     soft_max: float
-    max_cost: float
-    max_visits: int
+    min_cost: float = 100
+    max_cost: float = 100
+    max_visits: int = 1
 
 
 @dataclass
@@ -72,15 +72,11 @@ class Scheduler:
         self.end_city = end_city or start_city
 
         self.cities = set(relevant_cities or [])
-        self.cities = self.cities | set(
-            [self.start_city, self.end_city]
-        )
+        self.cities = self.cities | set([self.start_city, self.end_city])
         self.cities = self.cities | set(
             sc.city for sc in self.contiguous_sequence_constraints
         )
-        self.cities = self.cities | set(
-            drc.city for drc in self.date_range_constraints
-        )
+        self.cities = self.cities | set(drc.city for drc in self.date_range_constraints)
         self.flight_costs = get_approx_flight_data(flight_costs, self.cities)
         # remove irrelevant cities
         self.flight_costs = {
@@ -124,9 +120,7 @@ class Scheduler:
                 if drc.min_start_day is not None and drc.min_start_day > day:
                     self.model.Add(var == 0)
 
-                if (
-                    drc.max_start_day is not None and drc.max_start_day == day
-                ):
+                if drc.max_start_day is not None and drc.max_start_day == day:
                     # We should be in city at least one day before or equal to max_start_day
                     prior_days = [
                         self.get_days_in_city_var(drc.city, drc.visit, day)
@@ -137,17 +131,16 @@ class Scheduler:
                 # if we have both a max_start and min_end, we need to be in city
                 # all days in between
                 if (
-                    drc.max_start_day is not None and drc.max_start_day >= day
-                    and drc.min_end_day is not None and drc.min_end_day <= day
+                    drc.max_start_day is not None
+                    and drc.max_start_day >= day
+                    and drc.min_end_day is not None
+                    and drc.min_end_day <= day
                 ):
                     self.model.Add(var == 1)
 
                 # otherwise with a min_end_day we have to at least be in city on min_end_day
-                elif (
-                    drc.min_end_day is not None and drc.min_end_day == day
-                ):
+                elif drc.min_end_day is not None and drc.min_end_day == day:
                     self.model.Add(var == 1)
-
 
                 # We should not be in city after max_end_day
                 if drc.max_end_day is not None and drc.max_end_day < day:
@@ -277,11 +270,9 @@ class Scheduler:
         num_days = len(days_in_city)
 
         # Identify transitions from 'not in city' to 'in city'
-        for day in range(2, num_days+1):
+        for day in range(2, num_days + 1):
             flight_vars_to_city_on_day = [
-                self.get_flight_var(
-                   origin, city, day - 1, ovisit, visit
-                )
+                self.get_flight_var(origin, city, day - 1, ovisit, visit)
                 for origin in self.cities
                 for ovisit in range(1, self.max_visits.get(origin, 1) + 1)
                 if origin != city
@@ -356,23 +347,23 @@ class Scheduler:
         self.set_objective()
 
     def solve(self, verbose=True):
-        solver = cp_model.CpSolver()
+        self.solver = cp_model.CpSolver()
         if verbose:
-            solver.parameters.log_search_progress = True
-            solver.parameters.cp_model_presolve = (
+            self.solver.parameters.log_search_progress = True
+            self.solver.parameters.cp_model_presolve = (
                 False  # Disables presolve to see the search log.
             )
-            solver.parameters.cp_model_probing_level = (
+            self.solver.parameters.cp_model_probing_level = (
                 0  # Disables probing to see the search log.
             )
-            solver.parameters.enumerate_all_solutions = True
+            self.solver.parameters.enumerate_all_solutions = True
         solution_printer = cp_model.ObjectiveSolutionPrinter()
 
-        status = solver.Solve(self.model, solution_printer)
-        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        self.status = self.solver.Solve(self.model, solution_printer)
+        if self.status == cp_model.OPTIMAL or self.status == cp_model.FEASIBLE:
             flights = []
             for varname, var in self.flight_vars.items():
-                value = solver.Value(var)
+                value = self.solver.Value(var)
                 if value:
                     origin, ovisit, destination, dvisit, date = varname.split("_")
                     flights.append((origin, ovisit, destination, dvisit, int(date)))
@@ -383,7 +374,7 @@ class Scheduler:
                 print(f"Flight: {origin}#{ovisit} -> {destination}#{dvisit} on {date}")
             day_to_city = defaultdict(list)
             for varname, var in self.days_in_city.items():
-                value = solver.Value(var)
+                value = self.solver.Value(var)
                 if value:
                     city, visit, day = varname.split("_")
                     day_to_city[int(day)].append((city, visit))
@@ -396,29 +387,42 @@ class Scheduler:
                 for i, transition in enumerate(day_transitions):
                     day = i + 1
                     print(
-                        f"Transition({city}#{visit} {day}->{day+1}): {solver.Value(transition)}"
+                        f"Transition({city}#{visit} {day}->{day+1}): {self.solver.Value(transition)}"
                     )
 
             print("Penalties:")
             for i, var in enumerate(self.obj_bool_vars):
-                if solver.BooleanValue(var):
+                if self.solver.BooleanValue(var):
                     penalty = self.obj_bool_coeffs[i]
                     if penalty > 0:
                         print("  %s violated, penalty=%i" % (var.Name(), penalty))
                     else:
                         print("  %s fulfilled, gain=%i" % (var.Name(), -penalty))
-        elif status == cp_model.INFEASIBLE:
+        elif self.status == cp_model.INFEASIBLE:
             print("Infeasible subsets:")
-            print(solver.ResponseProto())
+            print(self.solver.ResponseProto())
         else:
             print("No solution found.")
 
         print()
         print("Statistics")
-        print("  - status          : %s" % solver.StatusName(status))
-        print("  - conflicts       : %i" % solver.NumConflicts())
-        print("  - branches        : %i" % solver.NumBranches())
-        print("  - wall time       : %f s" % solver.WallTime())
+        print("  - status          : %s" % self.solver.StatusName(self.status))
+        print("  - conflicts       : %i" % self.solver.NumConflicts())
+        print("  - branches        : %i" % self.solver.NumBranches())
+        print("  - wall time       : %f s" % self.solver.WallTime())
+
+    def get_result_flight_records(self):
+        if self.status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+            return []
+        flights = []
+        for varname, var in self.flight_vars.items():
+            value = self.solver.Value(var)
+            if value:
+                origin, _, destination, _, day = varname.split("_")
+                flights.append(
+                    {"origin": origin, "destination": destination, "day": int(day)}
+                )
+        return sorted(flights, key=lambda x: x["day"])
 
 
 def get_approx_flight_data(nonstop_flight_costs, relevant_cities, layover_time=2):
@@ -460,27 +464,14 @@ def get_approx_flight_data(nonstop_flight_costs, relevant_cities, layover_time=2
 
 
 if __name__ == "__main__":
-    flight_costs = {
-        ("LAX", "MEX"): 3,
-        ("MEX", "LAX"): 3,
-        ("MEX", "OAX"): 1,
-        ("OAX", "MEX"): 1,
-        ("LAX", "MGA"): 5,
-        ("MGA", "LAX"): 5,
-        ("MEX", "MGA"): 3,
-        ("MGA", "MEX"): 3,
-        ("SJD", "LAX"): 2,
-        ("LAX", "SJD"): 2,
-        ("SJD", "MEX"): 2,
-        ("MEX", "SJD"): 2,
-    }
     bucket = "gpt-travel-planner-data"
     today = pd.Timestamp.today().strftime("%Y-%m-%d")
-    # flight_costs = build_flight_costs_from_remote_file(bucket, f'{today}/flights.pickle', f'{today}_flights.pickle')
-    # flight_costs = build_flight_costs_from_remote_file(bucket, f'flights.pickle')
-    with open("flights_full.pickle", "rb") as f:
-        flights = pickle.load(f)
-    flight_costs = build_flight_costs(flights)
+    flight_costs = build_flight_costs_from_remote_file(
+        bucket, f"{today}/flights.pickle", f"{today}_flights.pickle"
+    )
+    #  with open("flights_full.pickle", "rb") as f:
+    #  flights = pickle.load(f)
+    #  flight_costs = build_flight_costs(flights)
 
     contiguous_sequence_constraints = [
         ContiguousSequenceConstraint(

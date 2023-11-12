@@ -109,3 +109,44 @@ def test_seed_data():
             ],
         }
     ]
+
+
+def test_schedule_trip():
+    data = {
+        "start_city": "LAX",
+        "ndays": 31,
+        "contiguous_sequence_constraints": [
+            {
+                "city": "MEX",
+                "hard_min": 7,
+                "soft_min": 10,
+                "hard_max": 10,
+                "soft_max": 7,
+                "max_visits": 2,
+            },
+            {"city": "OAX", "hard_min": 5, "soft_min": 7, "hard_max": 7, "soft_max": 7},
+            {"city": "MGA", "hard_min": 6, "soft_min": 7, "hard_max": 7, "soft_max": 7},
+            {"city": "SJD", "hard_min": 3, "soft_min": 4, "hard_max": 5, "soft_max": 4},
+        ],
+        "date_range_constraints": [
+            {"city": "MEX", "min_start_day": 2, "max_end_day": 20},
+            {
+                "city": "MGA",
+                "min_start_day": 16,
+                "max_start_day": 17,
+                "min_end_day": 23,
+                "max_end_day": 24,
+            },
+        ],
+    }
+    response = requests.post("http://localhost:8080", json=data)
+    assert response.status_code == 200
+    # TODO result in non-deterministic
+    assert response.json() == [
+        {"day": 1, "destination": "MEX", "origin": "LAX"},
+        {"day": 2, "destination": "OAX", "origin": "MEX"},
+        {"day": 9, "destination": "MEX", "origin": "OAX"},
+        {"day": 16, "destination": "MGA", "origin": "MEX"},
+        {"day": 23, "destination": "SJD", "origin": "MGA"},
+        {"day": 27, "destination": "LAX", "origin": "SJD"},
+    ]

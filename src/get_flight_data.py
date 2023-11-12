@@ -14,7 +14,12 @@ import sys
 import pickle
 import fire
 import pandas as pd
-from utils import upload_file_to_gcs, download_file_from_gcs
+from utils import (
+    upload_file_to_gcs,
+    download_file_from_gcs,
+    cache_with_ttl,
+    persist_to_file,
+)
 
 
 def open_and_save_new_data(new_data, output_file, bucket):
@@ -224,11 +229,13 @@ def build_flight_costs(flights):
     return flight_costs
 
 
+# @cache_with_ttl(ttl=60 * 60 * 24)
+@persist_to_file("flights_cache.pickle")
 def build_flight_costs_from_remote_file(bucket, remote_filename, local_filename):
     download_file_from_gcs(remote_filename, local_filename, bucket)
-    with open(filename, "rb") as f:
+    with open(local_filename, "rb") as f:
         flights = pickle.load(f)
-    flight_costs = build_flight_costs(flights)
+    return build_flight_costs(flights)
 
 
 if __name__ == "__main__":
