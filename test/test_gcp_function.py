@@ -88,13 +88,13 @@ def test_pick_flights():
         "hard_min_layover_duration": 3600,
         "soft_max_layover_duration": 7200,
         "hard_max_layover_duration": 10800,
-        "airline_preferences": {"American Airlines": 1, "United Airlines": 2},
-        "seat_class_prefernces": {
-            "economy": 1,
-            "premium_economy": 2,
-            "business": 3,
-            "first": 4,
-        },
+        "airline_preferences": ["AA", "UA"],
+        "seat_class_preferences": [
+            "economy",
+            "premium_economy",
+            "business",
+            "first",
+        ],
         "seat_location_preference": "window",
         "seat_location_row_preference": "front",
         "desires_extra_legroom": True,
@@ -140,7 +140,7 @@ def test_pick_flights():
     assert response.json() == [
         {
             "display_metrics": {
-                "is_preferred_airline": [true, true, true],
+                "is_preferred_airline": [True, True, true],
                 "layover_durations": [0, 0, 0],
                 "max_total_duration": 5.916666666666667,
                 "nstops": 0,
@@ -278,13 +278,13 @@ def test_get_flight_preferences():
         "hard_min_layover_duration": 3600,
         "soft_max_layover_duration": 7200,
         "hard_max_layover_duration": 10800,
-        "airline_preferences": {"American Airlines": 1, "United Airlines": 2},
-        "seat_class_prefernces": {
-            "economy": 1,
-            "premium_economy": 2,
-            "business": 3,
-            "first": 4,
-        },
+        "airline_preferences": ["AA", "UA"],
+        "seat_class_preferences": [
+            "economy",
+            "premium_economy",
+            "business",
+            "first",
+        ],
         "seat_location_preference": "window",
         "seat_location_row_preference": "front",
         "desires_extra_legroom": True,

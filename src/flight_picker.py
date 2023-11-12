@@ -86,13 +86,15 @@ class UserFlightPreferences:
     soft_max_layover_duration: datetime.timedelta
     hard_max_layover_duration: datetime.timedelta
 
-    airline_preferences: dict[str, int]
-    seat_class_prefernces: dict[SeatClass, int]
+    # TODO change these to arrays and use iata code for airlines
+    airline_preferences: list[str]
+    seat_class_preferences: list[SeatClass]
     seat_location_preference: SeatLocation
     seat_location_row_preference: SeatRow
     desires_extra_legroom: bool
     # TODO how to encode preferences for cost vs duration
     # cost_sensitivity: float # must be tunable perhaps by asking the user questions
+    # TODO perhaps encode these an array or their own objectg
     total_cost_weight: float = 0.4
     total_duration_weight: float = 0.2
     preferred_airline_ratio_weight: float = 0.05
@@ -116,9 +118,9 @@ class UserFlightPreferences:
         data = asdict(self)
 
         # Convert enum fields to their string representation
-        data["seat_class_prefernces"] = {
-            k.value: v for k, v in self.seat_class_prefernces.items()
-        }
+        data["seat_class_preferences"] = [
+            k.value for k in self.seat_class_preferences
+        ]
         data["seat_location_preference"] = self.seat_location_preference.value
         data["seat_location_row_preference"] = self.seat_location_row_preference.value
 
@@ -136,8 +138,8 @@ class UserFlightPreferences:
     def from_json(cls, data: dict) -> "UserFlightPreferences":
         data = data.copy()
         # Convert strings back to enum values for SeatClass, SeatRow, and SeatLocation
-        data["seat_class_prefernces"] = {
-            SeatClass(k): v for k, v in data["seat_class_prefernces"].items()
+        data["seat_class_preferences"] = {
+            SeatClass(k) for k in data["seat_class_preferences"]
         }
         data["seat_location_preference"] = SeatLocation(
             data["seat_location_preference"]
@@ -537,12 +539,12 @@ def seed_data():
             hard_max_layover_duration=datetime.timedelta(hours=6),
             soft_max_duration=datetime.timedelta(hours=5),
             hard_max_duration=datetime.timedelta(hours=20),
-            airline_preferences={
-                "Aeromexico": 1,
-                "United Airlines": 2,
-                "American Airlines": 3,
-            },
-            seat_class_prefernces={SeatClass.ECONOMY: 1},
+            airline_preferences=[
+                "AM",
+                "UA",
+                "AA",
+            ],
+            seat_class_preferences=[SeatClass.ECONOMY],
             seat_location_preference=SeatLocation.AISLE,
             seat_location_row_preference=SeatRow.MIDDLE,
             desires_extra_legroom=True,
@@ -708,10 +710,10 @@ def offers_total_duration_score(
 
 
 # TODO should use order of desired airlines instead of binary
-def offer_is_desired_airline(offer: Offer, desired_airlines: dict[str, int]):
+def offer_is_desired_airline(offer: Offer, desired_airlines: list[str]):
     return any(
-        s.marketing_carrier.name in desired_airlines
-        or s.operating_carrier.name in desired_airlines
+        s.marketing_carrier.iata_code in desired_airlines
+        or s.operating_carrier.iata_code in desired_airlines
         for s in offer.slices[0].segments
     )
 
@@ -962,8 +964,10 @@ def offer_to_json(offer: Offer) -> dict:
                         "destination": segment.destination.iata_code,
                         "departing_at": segment.departing_at.isoformat(),
                         "arriving_at": segment.arriving_at.isoformat(),
-                        "operating_carrier": segment.operating_carrier.name,
-                        "marketing_carrier": segment.marketing_carrier.name,
+                        "operating_carrier": segment.operating_carrier.iata_code,
+                        "marketing_carrier": segment.marketing_carrier.iata_code,
+                        "operating_carrier_name": segment.operating_carrier.name,
+                        "marketing_carrier_name": segment.marketing_carrier.name,
                         "duration": (
                             segment.arriving_at - segment.departing_at
                         ).total_seconds(),
