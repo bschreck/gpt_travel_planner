@@ -49,11 +49,19 @@ os.environ['AVIATIONSTACK_API_KEY']})
                 if flight['arrival']['iata'] not in known_airports:
                     with lock:
                         known_airports.add(flight['arrival']['iata'])
-                        with open(output_file, 'wb') as f:
-                            pickle.dump(data, f)
-                        if bucket is not None:
-                            upload_file_to_gcs(output_file, output_file, bucket)
                     airport_queue.put(flight['arrival']['iata'])
+
+        print("got data")
+        if lock is not None:
+            print("attempting lock")
+            with lock:
+                print("got lock")
+                with open(output_file, 'wb') as f:
+                    pickle.dump(data, f)
+                if bucket is not None:
+                    print("bucket is not none")
+                    upload_file_to_gcs(output_file, output_file, bucket)
+                    print("uploaded")
 
         count = resp.json()['pagination']['count']
         if count < limit:
@@ -159,8 +167,6 @@ def get_daily_flights_crawl_multithreaded(
 
 
 def main(max_total_calls: int = 1000, output_file: str = 'flights.pickle', multithreaded: bool = True, bucket: str = None):
-    print(max_total_calls, output_file, bucket)
-    return
     if multithreaded:
         flights = get_daily_flights_crawl_multithreaded(max_total_calls=max_total_calls, output_file=output_file, bucket=bucket)
     else:
