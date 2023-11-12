@@ -4,8 +4,8 @@ import requests
 import time
 
 # TODO
-#@pytest.fixture(scope="module", autouse=True)
-#def start_gcp_function():
+# @pytest.fixture(scope="module", autouse=True)
+# def start_gcp_function():
 #    process = subprocess.Popen([
 #        "functions-framework-python",
 #         "--target",
@@ -47,6 +47,7 @@ import time
 #        process.kill()  # Force kill if it's not terminating
 #        process.wait()  # Wait for force kill to complete
 
+
 def test_seed_data():
     data = {
         "user_id": "test_user",
@@ -62,12 +63,49 @@ def test_seed_data():
     }
     response = requests.post(
         "https://us-west1-travel-planner-404820.cloudfunctions.net/python-http-function",
-        #"http://localhost:8080",
+        # "http://localhost:8080",
         json=data,
     )
     print(response.text)
     assert response.status_code == 200
     print(response.json())
-    assert response.json() == [{'display_metrics': {'is_preferred_airline': [True], 'layover_durations': [0], 'max_total_duration': 1.5833333333333333, 'nstops': 0, 'time_of_days': ['morning'], 'total_cost': 79.21}, 'metrics': {'layover_duration': 0.0, 'nstops': 1.0, 'preferred_airline_ratio': 1.0, 'time_of_day': 1.0, 'total_cost': 0.960395, 'total_duration': 0.9208333333333334}, 'offers': [{'slices': [{'segments': [{'arriving_at': '2024-01-01T10:00:00', 'departing_at': '2024-01-01T08:25:00', 'destination': 'LAX', 'duration': 5700.0, 'marketing_carrier': 'United Airlines', 'operating_carrier': 'United Airlines', 'origin': 'SFO'}]}], 'total_amount': 79.21}]}]
-
-
+    assert response.json() == [
+        {
+            "display_metrics": {
+                "is_preferred_airline": [True],
+                "layover_durations": [0],
+                "max_total_duration": 1.5833333333333333,
+                "nstops": 0,
+                "time_of_days": ["morning"],
+                "total_cost": 79.21,
+            },
+            "metrics": {
+                "layover_duration": 0.0,
+                "nstops": 1.0,
+                "preferred_airline_ratio": 1.0,
+                "time_of_day": 1.0,
+                "total_cost": 0.960395,
+                "total_duration": 0.9208333333333334,
+            },
+            "offers": [
+                {
+                    "slices": [
+                        {
+                            "segments": [
+                                {
+                                    "arriving_at": "2024-01-01T10:00:00",
+                                    "departing_at": "2024-01-01T08:25:00",
+                                    "destination": "LAX",
+                                    "duration": 5700.0,
+                                    "marketing_carrier": "United Airlines",
+                                    "operating_carrier": "United Airlines",
+                                    "origin": "SFO",
+                                }
+                            ]
+                        }
+                    ],
+                    "total_amount": 79.21,
+                }
+            ],
+        }
+    ]

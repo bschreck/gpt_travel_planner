@@ -1,19 +1,19 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv('../.env')
+load_dotenv("../.env")
 
 client = OpenAI()
 
-intro_text = '''
+intro_text = """
 You are a a travel planner and booking agent, responsible for finding flights, lodging options, things to do, and all-in-one packages to fit the constraints and desires of the customer.
 You should respond succinctly with specific details in a step-by-step manner that can immediately be acted upon, removing much of the paradox of choice from the customer.
-'''
+"""
 assistant = client.beta.assistants.create(
     name="Travel Planner",
     instructions=intro_text,
     tools=[{"type": "retrieval"}],
-    model="gpt-4-1106-preview"
+    model="gpt-4-1106-preview",
 )
 print("assistant id", assistant.id)
 
@@ -35,24 +35,19 @@ message = client.beta.threads.messages.create(
     - I'm flying from LAX.
     - I want to spend 4 days in Baja (La Ventana) with my cousins who will be there Dec 15-31. They stay at Pelican Reef. I'd like to stay there or nearby.
     - I want to use either Aeromexico miles (via Amex transfer) or fly on United or American (since I have flight credits) as much as possible.
-    """
+    """,
 )
 
 run = client.beta.threads.runs.create(
-  thread_id=thread.id,
-  assistant_id=assistant.id,
-  instructions="Please address the user as Ben Schreck. The user has a premium account."
+    thread_id=thread.id,
+    assistant_id=assistant.id,
+    instructions="Please address the user as Ben Schreck. The user has a premium account.",
 )
 
 print("run", run.id, run)
 while True:
-    run = client.beta.threads.runs.retrieve(
-      thread_id=thread.id,
-      run_id=run.id
-    )
+    run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
     if run.status == "completed":
         break
 
-messages = client.beta.threads.messages.list(
-  thread_id=thread.id
-)
+messages = client.beta.threads.messages.list(thread_id=thread.id)

@@ -8,6 +8,7 @@ def upload_file_to_gcs(local_file_path, remote_file_path, bucket_name):
     bucket = client.bucket(bucket_name)
     bucket.blob(remote_file_path).upload_from_filename(local_file_path)
 
+
 def download_file_from_gcs(remote_file_path, local_file_path, bucket_name):
     client = storage.Client()
     bucket = client.bucket(bucket_name)
@@ -15,11 +16,9 @@ def download_file_from_gcs(remote_file_path, local_file_path, bucket_name):
 
 
 def persist_to_file(file_name):
-
     def decorator(original_func):
-
         try:
-            cache = pickle.load(open(file_name, 'rb'))
+            cache = pickle.load(open(file_name, "rb"))
         except (IOError, ValueError):
             cache = {}
 
@@ -27,10 +26,9 @@ def persist_to_file(file_name):
             key = (args, tuple(kwargs.keys()))
             if key not in cache:
                 cache[key] = original_func(*args, **kwargs)
-                pickle.dump(cache, open(file_name, 'wb'))
+                pickle.dump(cache, open(file_name, "wb"))
             return cache[key]
 
         return new_func
 
     return decorator
-

@@ -28,6 +28,7 @@ test = [
 dev = [
   "jupyter",
   "ipython",
+  "black",
 ]
 
 [tool.black]
