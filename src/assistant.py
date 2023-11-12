@@ -1,6 +1,10 @@
 from openai import OpenAI
 from dotenv import load_dotenv
 from tools import tools
+import requests
+import os
+import json
+FUNCTIONS_URL = os.getenv("FUNCTIONS_URL")
 
 load_dotenv("../.env")
 
@@ -21,7 +25,7 @@ and use the scheduling and flight tools to find the best flights for the custome
 
 assistant = client.beta.assistants.create(
     name="Travel Planner",
-    instructions=schedule_trip_prompt,
+    instructions=intro_text,
     tools=[{"type": "retrieval"}]+tools,
     model="gpt-4-1106-preview",
 )
@@ -61,7 +65,33 @@ run = client.beta.threads.runs.create(
 print("run", run.id, run)
 while True:
     run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-    if run.status == "completed":
+    if run.status == 'requires_action':
+        print("action", run.required_action)
+        action = run.required_action
+        if action.type == "submit_tool_outputs":
+            tool_calls = action.submit_tool_outputs.tool_calls
+            tool_outputs = []
+            for call in tool_calls:
+                print("schedule trip", call)
+                response = requests.post(
+                    FUNCTIONS_URL + f"/?function={call.function.name}",
+                    json=json.loads(call.function.arguments)
+                )
+                response.raise_for_status()
+                tool_outputs.append(
+                    {'tool_call_id': call.id, 'output': json.dumps(response.json())}
+                )
+
+            run = client.beta.threads.runs.submit_tool_outputs(
+              thread_id=thread.id,
+              run_id=run.id,
+              tool_outputs=tool_outputs,
+            )
+        else:
+            raise Exception(f"unknown action type {action.type}")
+    elif run.status == "completed":
         break
 
 messages = client.beta.threads.messages.list(thread_id=thread.id)
+
+# TODO needs to be robust to input arguments missing

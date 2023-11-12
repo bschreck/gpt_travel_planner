@@ -2,6 +2,7 @@
 name = "gpt_travel_planner"
 version = "1"
 dependencies = [
+    "openai",
     "duffel-api",
     "ortools",
     "pyflightdata",

@@ -3,6 +3,7 @@
 GOOGLE_REGION=us-west1
 SERVICE_ACCOUNT="cloud-run-deployer@travel-planner-404820.iam.gserviceaccount.com"
 FUNCTION_NAME="gpt-travel-planner"
+pip install -e .
 
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \

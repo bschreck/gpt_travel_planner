@@ -219,7 +219,8 @@ class PassengerInfo:
     def from_json(cls, data: dict) -> "PassengerInfo":
         data = data.copy()
         data["date_of_birth"] = datetime.date.fromisoformat(data["date_of_birth"])
-        data["ptype"] = PassengerType(data["ptype"])
+        if 'ptype' in data:
+            data["ptype"] = PassengerType(data["ptype"])
         return cls(**data)
 
     def merge(self, other: "PassengerInfo") -> "PassengerInfo":
@@ -312,6 +313,8 @@ def parse_passenger_info(request: dict) -> PassengerInfo:
     if "passenger_name" not in request:
         return None, None
     passenger_name = request["passenger_name"]
+    if 'name' not in request['passenger_info']:
+        request['passenger_info']['name'] = passenger_name
     try:
         passenger_info = PassengerInfo.from_json(request["passenger_info"])
     except KeyError as e:
