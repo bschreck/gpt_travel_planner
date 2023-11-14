@@ -113,7 +113,7 @@ tools = [
                         },
                         "description": "A list of cities that the user wants to, but doesn't need to, visit. You should include all possible cities in this list, because the scheduler won't look for additional ones",
                     },
-                    "must_visits" : {
+                    "must_visits": {
                         "type": "array",
                         "items": {
                             "type": "string",
@@ -383,6 +383,44 @@ tools = [
                     "passenger_name": {
                         "type": "string",
                         "description": "The name of the passenger",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_iata_codes_by_country",
+            "description": "Get a mapping of iata code to city for a country",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "country": {
+                        "type": "string",
+                        "enum": ['US', 'PR', 'MH', 'MP', 'GU', 'SO', 'AQ', 'GB', 'PG', 'AD', 'SD',
+       'SA', 'AE', 'SS', 'ES', 'CN', 'AF', 'LK', 'SB', 'CO', 'AU', 'MG',
+       'TD', 'AL', 'XK', 'AM', 'MX', 'MZ', 'PW', 'NR', 'AO', 'AR', 'AS',
+       'AT', 'GA', 'AZ', 'BA', 'BE', 'DE', 'BF', 'BG', 'GL', 'BH', 'BI',
+       'IS', 'BJ', 'OM', 'BM', 'KE', 'PH', 'BO', 'BR', 'BS', 'CV', 'BW',
+       'FJ', 'BY', 'UA', 'LR', 'BZ', 'CA', 'CD', 'CF', 'CG', 'MR', 'CH',
+       'CL', 'CM', 'CR', 'CU', 'CY', 'CZ', 'SK', 'PA', 'DZ', 'ID', 'GH',
+       'RU', 'CI', 'DK', 'NG', 'DO', 'NE', 'HR', 'TN', 'TG', 'EC', 'EE',
+       'FI', 'EG', 'GG', 'JE', 'IM', 'FK', 'EH', 'NL', 'IE', 'FO', 'LU',
+       'GT', 'NO', 'PL', 'ER', 'MN', 'PT', 'SE', 'ET', 'LV', 'LT', 'ZA',
+       'SZ', 'GQ', 'SH', 'MU', 'IO', 'ZM', 'FM', 'KM', 'YT', 'RE', 'TF',
+       'ST', 'FR', 'SC', 'ZW', 'MW', 'LS', 'ML', 'GM', 'GE', 'GF',
+       'SL', 'GW', 'MA', 'GN', 'SN', 'GR', 'TZ', 'GY', 'SR', 'DJ', 'HK',
+       'LY', 'HN', 'VN', 'KZ', 'RW', 'HT', 'HU', 'UG', 'TL', 'IL', 'IN',
+       'IQ', 'IR', 'JP', 'IT', 'JM', 'JO', 'KG', 'BD', 'KI', 'KH', 'KP',
+       'KR', 'KW', 'LA', 'MY', 'PM', 'SI', 'PS', 'MT', 'MC', 'RO', 'LI',
+       'TR', 'MD', 'MK', 'GI', 'RS', 'ME', 'TC', 'GD', 'MM', 'NI', 'SV',
+       'MF', 'MV', 'KY', 'NC', 'CK', 'TO', 'TV', 'NU', 'WF', 'NP', 'WS',
+       'PF', 'VU', 'NZ', 'LB', 'PK', 'SY', 'QA', 'YE', 'UM', 'PE', 'TH',
+       'PY', 'TW', 'SG', 'VI', 'SM', 'UY', 'VE', 'AG', 'BB', 'DM', 'GP',
+       'MQ', 'BL', 'TJ', 'KN', 'LC', 'TM', 'AW', 'BQ', 'CW', 'SX', 'VG',
+       'AI', 'MS', 'TT', 'VC', 'UZ', 'VA', 'MO', 'BT', 'BN', 'CC', 'CX',
+       'NF']
                     }
                 },
             },

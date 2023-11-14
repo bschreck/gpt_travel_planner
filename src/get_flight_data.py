@@ -20,6 +20,7 @@ from utils import (
     cache_with_ttl,
     persist_to_file,
 )
+from config import DEFAULT_IATA_CODES_FILE
 
 
 def open_and_save_new_data(new_data, output_file, bucket):
@@ -214,6 +215,7 @@ def main(
 
 
 def build_flight_costs(flights):
+    # TODO: this is slow
     flight_costs = {}
     for flight in flights:
         departure, arrival = flight["departure"]["iata"], flight["arrival"]["iata"]
@@ -229,17 +231,40 @@ def build_flight_costs(flights):
     return flight_costs
 
 
+# TODO ttl
 @persist_to_file("flights_cache.pickle")
 # @cache_with_ttl(ttl=60 * 60 * 24)
 def build_flight_costs_from_remote_file(bucket, remote_filename, local_filename):
-    # TODO uncomment
-    # download_file_from_gcs(remote_filename, local_filename, bucket)
-    print("opening file")
+    download_file_from_gcs(remote_filename, local_filename, bucket)
     with open(local_filename, "rb") as f:
         flights = pickle.load(f)
-    print("building flight costs")
     return build_flight_costs(flights)
 
+
+def make_local_flight_costs_full(flights_local_file, flight_costs_local_file):
+    from scheduler import get_approx_flight_data
+    with open(flights_local_file, "rb") as f:
+        flights = pickle.load(f)
+    flight_costs = build_flight_costs(flights)
+    flight_costs = get_approx_flight_data(flight_costs)
+    with open(flight_costs_local_file, "wb") as f:
+        pickle.dump(flight_costs, f)
+    return flight_costs
+
+
+@cache_with_ttl(ttl=60 * 60 * 24)
+def iata_codes_from_file(filename=DEFAULT_IATA_CODES_FILE):
+    return pd.read_csv(filename)
+
+def get_iata_codes_by_country(request):
+    country = request.get_json(silent=True)['country']
+    iata_codes = iata_codes_from_file()
+    relevant = iata_codes[
+        (iata_codes['iso_country'] == country)
+        & (iata_codes['type'].isin(['large_airport', 'medium_airport']))
+    ]
+    return {v[0]: v[1] for v in relevant[['iata_code', 'municipality']].values
+            if isinstance(v[0], str) and isinstance(v[1], str)}
 
 if __name__ == "__main__":
     fire.Fire(main)

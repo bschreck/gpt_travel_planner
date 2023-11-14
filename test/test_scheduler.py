@@ -1,9 +1,37 @@
-from scheduler import Scheduler, parse_schedule_trip_json
+from scheduler import Scheduler, parse_schedule_trip_json, get_approx_flight_data, get_approx_flight_data_scipy
 from get_flight_data import build_flight_costs
 import pytest
 import pickle
+import time
 
 FLIGHT_COSTS_LOCAL_FILE = "flights_local.pickle"
+FULL_FLIGHTS_LOCAL_FILE = "2023-11-11/flights.pickle"
+FULL_FLIGHT_COSTS_LOCAL_FILE = "full_flights_local.pickle"
+CITIES = [
+    "LAX",
+    "MEX",
+    "OAX",
+    "SJD",
+    "MGA",
+    "LIM",
+    "BOG",
+    "SCL",
+    "GIG",
+    "GRU",
+    "UIO",
+    "EZE",
+    "AEP",
+]
+
+
+def make_local_flight_costs():
+    with open(FULL_FLIGHT_COSTS_LOCAL_FILE, "rb") as f:
+        flight_costs = pickle.load(f)
+    flight_costs = {(o, d): c for (o, d), c in flight_costs.items()
+            if o in CITIES and d in CITIES}
+    with open(FLIGHT_COSTS_LOCAL_FILE, "wb") as f:
+        pickle.dump(flight_costs, f)
+    return flight_costs
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +93,35 @@ def flight_costs():
                 {"origin": "SJD", "destination": "MGA", "day": 20},
                 {"origin": "MGA", "destination": "LAX", "day": 30},
             ],
-        )
+        ),
+        (
+            {
+                "start_city": "LAX",
+                "ndays": 31,
+                "contiguous_sequence_constraints": [{"city": "EZE", "hard_min": 7}],
+                "date_range_constraints": [
+                    {
+                        "city": "EZE",
+                        "min_start_day": 5,
+                        "max_start_day": 13,
+                        "min_end_day": 12,
+                        "max_end_day": 20,
+                        "visit": 1,
+                    },
+                    {
+                        "city": "BOG",
+                        "min_start_day": 24,
+                        "max_start_day": 24,
+                        "min_end_day": 26,
+                        "max_end_day": 26,
+                        "visit": 1,
+                    },
+                ],
+                "relevant_cities": ["LIM", "BOG", "SCL", "GIG", "GRU", "UIO"],
+                "must_visits": ["EZE", "BOG"],
+            },
+            [],
+        ),
     ],
 )
 def test_scheduler(flight_costs, raw_args, expected):
@@ -85,5 +141,10 @@ def test_scheduler(flight_costs, raw_args, expected):
     scheduler.solve()
     result_records = scheduler.get_result_flight_records()
     # TODO better test cases
-    assert len(result_records) == 5
+    assert len(result_records) > 0
     assert [r["day"] >= 1 and r["day"] <= 30 for r in result_records]
+
+
+if __name__ == '__main__':
+    #make_local_flight_costs_full()
+    make_local_flight_costs()

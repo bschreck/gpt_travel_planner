@@ -1,12 +1,18 @@
 from collections import defaultdict
 from ortools.sat.python import cp_model
 from itertools import permutations
-from get_flight_data import build_flight_costs, build_flight_costs_from_remote_file
+from get_flight_data import build_flight_costs, build_flight_costs_from_remote_file, iata_codes_from_file
 from shift_scheduling_app import negated_bounded_span
 from dataclasses import dataclass
 from config import DEFAULT_BUCKET, DEFAULT_FLIGHTS_FILE
+from tqdm import tqdm
 import pandas as pd
 import pickle
+import networkx as nx
+from networkx import all_pairs_dijkstra_path
+import numpy as np
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import dijkstra
 
 
 def add_soft_sequence_constraint(
@@ -149,6 +155,16 @@ class Scheduler:
         end_city: str | None = None,
         must_visits: list[str] | None = None,
     ):
+        # TODO get more data in flight costs
+        airport_mapping = {
+            'AEP': 'EZE'
+        }
+        for k, v in airport_mapping.items():
+            for (o, d), c in flight_costs.items():
+                if o == k:
+                    flight_costs[(v, d)] = c
+                if d == k:
+                    flight_costs[(o, v)] = c
         self.ndays = ndays
         self.start_day, self.end_day = 1, ndays
         if (
@@ -175,15 +191,16 @@ class Scheduler:
         self.max_visits = {
             sc.city: sc.max_visits for sc in self.contiguous_sequence_constraints
         }
-        self.flight_costs = get_approx_flight_data(flight_costs, self.cities)
+        # self.flight_costs = get_approx_flight_data(flight_costs, self.cities)
+
         # remove irrelevant cities
+
         self.flight_costs = {
             k: v
-            for k, v in self.flight_costs.items()
+            for k, v in flight_costs.items()
             if k[0] in self.cities and k[1] in self.cities
         }
 
-        self.cities = set()
         for o, d in self.flight_costs:
             self.cities.add(o)
             self.cities.add(d)
@@ -528,43 +545,66 @@ class Scheduler:
                 )
         return sorted(flights, key=lambda x: x["day"])
 
+def get_approx_flight_data(nonstop_flight_costs, layover_time=2):
+    G = nx.Graph()
+    nonstop_flight_costs = {
+        (o, d): c
+        for (o, d), c in nonstop_flight_costs.items()
+        if o is not None and d is not None
+    }
+    G.add_weighted_edges_from([(o, d, c) for (o, d), c in nonstop_flight_costs.items()])
+    paths = all_pairs_dijkstra_path(G, weight='weight')
+    def path_to_cost(path):
+        layover_cost = layover_time * (len(path) - 2)
+        return layover_cost + sum(G[u][v]['weight'] for u, v in zip(path[:-1], path[1:]))
+    expanded_dict_flights = {
+        (o, d): path_to_cost(path) for o, d_to_path in paths
+        for d, path in d_to_path.items()
+        if o != d
+    }
+    return expanded_dict_flights
 
-def get_approx_flight_data(nonstop_flight_costs, relevant_cities, layover_time=2):
-    expanded_dict_flights = defaultdict(dict)
-    for (o, d), c in nonstop_flight_costs.items():
-        expanded_dict_flights[o][d] = c
 
-    # Add all relevant cities to the dictionary with zero cost for self-loop
-    for city in relevant_cities:
-        expanded_dict_flights[city][city] = 0
-    for o, d in permutations(relevant_cities, 2):
-        if d not in expanded_dict_flights[o]:
-            expanded_dict_flights[o][d] = float("inf")
+def get_approx_flight_data_scipy(nonstop_flight_costs, layover_time=2):
+    nodes = set()
+    for (o, d), _ in nonstop_flight_costs.items():
+        nodes.update([o, d])
+    nodes = sorted(list(nodes))
+    node_indices = {node: i for i, node in enumerate(nodes)}
 
-    # Implementing the Floyd-Warshall algorithm
-    for k in relevant_cities:
-        for i in relevant_cities:
-            for j in relevant_cities:
-                if (
-                    expanded_dict_flights[i][j]
-                    > expanded_dict_flights[i][k]
-                    + layover_time
-                    + expanded_dict_flights[k][j]
-                ):
-                    expanded_dict_flights[i][j] = (
-                        expanded_dict_flights[i][k]
-                        + layover_time
-                        + expanded_dict_flights[k][j]
-                    )
+    num_nodes = len(nodes)
+    graph_matrix = np.full((num_nodes, num_nodes), np.inf)
+    np.fill_diagonal(graph_matrix, 0)
 
-    approx_flight_data = {**nonstop_flight_costs}
-    # Updating the original dictionary with shortest indirect flight times
-    for i in relevant_cities:
-        for j in relevant_cities:
-            if i != j and (i, j) not in nonstop_flight_costs:
-                approx_flight_data[(i, j)] = expanded_dict_flights[i][j]
+    for (o, d), cost in nonstop_flight_costs.items():
+        o_idx, d_idx = node_indices[o], node_indices[d]
+        graph_matrix[o_idx][d_idx] = cost
 
-    return approx_flight_data
+    sparse_matrix = csr_matrix(graph_matrix)
+
+    distances, predecessors = dijkstra(csgraph=sparse_matrix, directed=False, return_predecessors=True, indices=None)
+
+    def get_path(Pr, i, j):
+        path = [j]
+        k = j
+        while Pr[i, k] != -9999:
+            path.append(Pr[i, k])
+            k = Pr[i, k]
+        return path[::-1]
+
+    expanded_dict_flights = {}
+    for o in nodes:
+        o_idx = node_indices[o]
+        for d in nodes:
+            d_idx = node_indices[d]
+            if o != d and distances[o_idx, d_idx] != np.inf:
+                path_indices = get_path(predecessors, o_idx, d_idx)
+                path = [nodes[idx] for idx in path_indices]
+                layover_cost = layover_time * (len(path) - 2)
+                total_cost = distances[o_idx, d_idx] + layover_cost
+                expanded_dict_flights[(o, d)] = total_cost
+    return expanded_dict_flights
+
 
 
 @dataclass
@@ -581,6 +621,22 @@ class ScheduleTripParams:
 
 
 def parse_schedule_trip_json(request_json: dict) -> ScheduleTripParams:
+    iata_codes = set(iata_codes_from_file()['iata_code'].tolist())
+    bad_cities = set()
+    passed_cities = set(
+        [request_json['start_city']]
+        + [request_json.get('end_city', None)]
+        + request_json.get('relevant_cities', [])
+        + request_json.get('must_visits', [])
+        + [sc_raw['city'] for sc_raw in request_json.get("contiguous_sequence_constraints", [])]
+        + [drc_raw['city'] for drc_raw in request_json.get("date_range_constraints", [])]
+    ) - set([None])
+    for city in passed_cities:
+        if city not in iata_codes:
+            bad_cities.add(city)
+    if len(bad_cities) > 0:
+        raise ValueError(f"Invalid iata airport codes: {bad_cities}")
+
     start_city = request_json["start_city"]
     end_city = request_json.get("end_city", None)
     ndays = request_json["ndays"]
@@ -588,7 +644,7 @@ def parse_schedule_trip_json(request_json: dict) -> ScheduleTripParams:
     filename = request_json.get("filename", DEFAULT_FLIGHTS_FILE)
     contiguous_sequence_constraints = []
     relevant_cities = request_json.get("relevant_cities", [])
-    must_visits=request_json.get("must_visits", [])
+    must_visits = request_json.get("must_visits", [])
     for sc_raw in request_json.get("contiguous_sequence_constraints", []):
         contiguous_sequence_constraints.append(
             ContiguousSequenceConstraint(

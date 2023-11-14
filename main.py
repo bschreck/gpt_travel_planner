@@ -21,12 +21,18 @@ from scheduler import Scheduler, parse_schedule_trip_json
 from src.get_flight_data import (
     get_daily_flights_crawl_multithreaded,
     build_flight_costs_from_remote_file,
+    make_local_flight_costs_full,
+    get_iata_codes_by_country
 )
-from src.utils import upload_file_to_gcs
+from src.utils import upload_file_to_gcs, cache_with_ttl
 import pickle
 import os
 from dataclasses import dataclass
-from config import DEFAULT_BUCKET, DEFAULT_FLIGHTS_FILE
+from config import (
+    DEFAULT_BUCKET,
+    DEFAULT_FLIGHTS_FILE,
+    DEFAULT_FLIGHT_COSTS_FILE,
+)
 
 
 def parse_pick_flights_json(
@@ -122,12 +128,23 @@ def pick_flights(request):
     return (compound_offers_with_metrics_to_json(flights), 200, headers)
 
 
-def schedule_trip(request):
-    params = parse_schedule_trip_json(request.get_json(silent=True))
-    print("building flight costs")
-    flight_costs = build_flight_costs_from_remote_file(
-        params.bucket, params.filename, params.filename
-    )
+def schedule_trip(request, bucket=DEFAULT_BUCKET, flight_costs_file=DEFAULT_FLIGHT_COSTS_FILE, flights_file=DEFAULT_FLIGHTS_FILE):
+    try:
+        params = parse_schedule_trip_json(request.get_json(silent=True))
+    except ValueError as e:
+        return (f"Error parsing input: {e}", 400, {})
+    if not os.path.exists(flight_costs_file):
+        if not os.path.exists(flights_file):
+            print("downloading and building flight costs")
+            flight_costs = build_flight_costs_from_remote_file(
+                params.bucket, params.filename, params.filename
+            )
+        print("making local all pairs flight costs")
+        flight_costs = make_local_flight_costs_full(flights_file, flight_costs_file)
+    else:
+        print("loading local all pairs flight costs")
+        with open(flight_costs_file, "rb") as f:
+            flight_costs = pickle.load(f)
     print("building scheduler")
     try:
         scheduler = Scheduler(
@@ -137,10 +154,11 @@ def schedule_trip(request):
             start_city=params.start_city,
             end_city=params.end_city,
             date_range_constraints=params.date_range_constraints,
+            relevant_cities=params.relevant_cities,
+            must_visits=params.must_visits,
         )
     except Exception as e:
         import traceback
-
         print(traceback.format_exc())
         breakpoint()
         return (f"Error building scheduler: {e}", 500, {})
@@ -173,6 +191,7 @@ def schedule_trip(request):
     return (result_records, 200, {})
 
 
+
 @functions_framework.http
 def functions_entrypoint(request):
     function = request.args.get("function")
@@ -191,6 +210,8 @@ def functions_entrypoint(request):
             return pick_flights(request)
         elif function == "schedule_trip":
             return schedule_trip(request)
+        elif function == "get_iata_codes_by_country":
+            return get_iata_codes_by_country(request)
         else:
             return (f"function {function} not found", 404, {})
     except Exception as e:
