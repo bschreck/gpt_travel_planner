@@ -89,12 +89,7 @@ def test_pick_flights():
         "soft_max_layover_duration": 7200,
         "hard_max_layover_duration": 10800,
         "airline_preferences": ["AA", "UA"],
-        "seat_class_preferences": [
-            "economy",
-            "premium_economy",
-            "business",
-            "first",
-        ],
+        "seat_class_preferences": ["economy", "premium_economy", "business", "first"],
         "seat_location_preference": "window",
         "seat_location_row_preference": "front",
         "desires_extra_legroom": True,
@@ -279,12 +274,7 @@ def test_get_flight_preferences():
         "soft_max_layover_duration": 7200,
         "hard_max_layover_duration": 10800,
         "airline_preferences": ["AA", "UA"],
-        "seat_class_preferences": [
-            "economy",
-            "premium_economy",
-            "business",
-            "first",
-        ],
+        "seat_class_preferences": ["economy", "premium_economy", "business", "first"],
         "seat_location_preference": "window",
         "seat_location_row_preference": "front",
         "desires_extra_legroom": True,
@@ -384,3 +374,13 @@ def test_get_user_info():
         "http://localhost:8080?function=get_passenger_info&passenger_name=test_user"
     )
     assert response.status_code == 200
+
+
+def test_defaults():
+    # test that these dataclasses can be created with just defaults, no arguments
+    ufp = UserFlightPreferences()
+    user = User()
+    assert user.flight_preferences == UserFlightPreferences()
+    assert user.passenger_info == PassengerInfo()
+    assert user.flight_preferences.to_json() == UserFlightPreferences().to_json()
+    assert user.passenger_info.to_json() == PassengerInfo().to_json()

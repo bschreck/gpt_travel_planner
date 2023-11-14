@@ -229,12 +229,15 @@ def build_flight_costs(flights):
     return flight_costs
 
 
-# @persist_to_file("flights_cache.pickle")
-@cache_with_ttl(ttl=60 * 60 * 24)
+@persist_to_file("flights_cache.pickle")
+# @cache_with_ttl(ttl=60 * 60 * 24)
 def build_flight_costs_from_remote_file(bucket, remote_filename, local_filename):
-    download_file_from_gcs(remote_filename, local_filename, bucket)
+    # TODO uncomment
+    # download_file_from_gcs(remote_filename, local_filename, bucket)
+    print("opening file")
     with open(local_filename, "rb") as f:
         flights = pickle.load(f)
+    print("building flight costs")
     return build_flight_costs(flights)
 
 

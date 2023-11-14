@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import datetime
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, fields, field
 from dotenv import load_dotenv
 from duffel_api import Duffel
 from duffel_api.models import Offer
@@ -11,7 +11,7 @@ from tenacity import (
     wait_random_exponential,
     stop_after_attempt,
 )
-from utils import download_file_from_gcs, upload_file_to_gcs
+from utils import download_file_from_gcs, upload_file_to_gcs, scale_weights
 from google.api_core.exceptions import NotFound
 from duffel_api.http_client import ApiError
 from requests import HTTPError
@@ -71,27 +71,37 @@ class SeatLocation(enum.StrEnum):
 
 @dataclass
 class UserFlightPreferences:
-    time_of_day_order: list[TimeOfDay]
-    hard_max_cost: float
-    soft_max_cost: float
-    single_leg_hard_max_cost: float
-    single_leg_soft_max_cost: float
-    soft_max_duration: datetime.timedelta
-    hard_max_duration: datetime.timedelta
+    time_of_day_order: list[TimeOfDay] = field(
+        default_factory=lambda: [
+            TimeOfDay.MORNING,
+            TimeOfDay.AFTERNOON,
+            TimeOfDay.EVENING,
+            TimeOfDay.EARLY_MORNING,
+            TimeOfDay.RED_EYE,
+        ]
+    )
+    hard_max_cost: float = 1000
+    soft_max_cost: float = 500
+    single_leg_hard_max_cost: float = 250
+    single_leg_soft_max_cost: float = 200
+    soft_max_duration: datetime.timedelta = pd.Timedelta(hours=5)
+    hard_max_duration: datetime.timedelta = pd.Timedelta(hours=10)
 
-    soft_max_stops: int
-    hard_max_stops: int
-    soft_min_layover_duration: datetime.timedelta
-    hard_min_layover_duration: datetime.timedelta
-    soft_max_layover_duration: datetime.timedelta
-    hard_max_layover_duration: datetime.timedelta
+    soft_max_stops: int = 1
+    hard_max_stops: int = 2
+    soft_min_layover_duration: datetime.timedelta = pd.Timedelta(hours=1.25)
+    hard_min_layover_duration: datetime.timedelta = pd.Timedelta(hours=0.75)
+    soft_max_layover_duration: datetime.timedelta = pd.Timedelta(hours=2)
+    hard_max_layover_duration: datetime.timedelta = pd.Timedelta(hours=5)
 
     # TODO change these to arrays and use iata code for airlines
-    airline_preferences: list[str]
-    seat_class_preferences: list[SeatClass]
-    seat_location_preference: SeatLocation
-    seat_location_row_preference: SeatRow
-    desires_extra_legroom: bool
+    airline_preferences: list[str] = field(default_factory=lambda: [])
+    seat_class_preferences: list[SeatClass] = field(
+        default_factory=lambda: [SeatClass.ECONOMY]
+    )
+    seat_location_preference: SeatLocation = SeatLocation.AISLE
+    seat_location_row_preference: SeatRow = SeatRow.FRONT
+    desires_extra_legroom: bool = True
     # TODO how to encode preferences for cost vs duration
     # cost_sensitivity: float # must be tunable perhaps by asking the user questions
     # TODO perhaps encode these an array or their own objectg
@@ -103,24 +113,25 @@ class UserFlightPreferences:
     nstops_weight: float = 0.1
 
     def __post_init__(self):
-        assert np.isclose(
-            self.total_cost_weight
-            + self.total_duration_weight
-            + self.preferred_airline_ratio_weight
-            + self.time_of_day_weight
-            + self.layover_duration_weight
-            + self.nstops_weight,
-            1,
-        )
+        weight_keys_defaults = [
+            ("total_cost_weight", 0.4),
+            ("total_duration_weight", 0.2),
+            ("preferred_airline_ratio_weight", 0.05),
+            ("time_of_day_weight", 0.15),
+            ("layover_duration_weight", 0.1),
+            ("nstops_weight", 0.1),
+        ]
+        weights = [getattr(self, key, default) for key, default in weight_keys_defaults]
+        scaled = scale_weights(weights)
+        for (key, _), value in zip(weight_keys_defaults, scaled):
+            setattr(self, key, value)
 
     def to_json(self):
         # Convert the dataclass to a dictionary
         data = asdict(self)
 
         # Convert enum fields to their string representation
-        data["seat_class_preferences"] = [
-            k.value for k in self.seat_class_preferences
-        ]
+        data["seat_class_preferences"] = [k.value for k in self.seat_class_preferences]
         data["seat_location_preference"] = self.seat_location_preference.value
         data["seat_location_row_preference"] = self.seat_location_row_preference.value
 
@@ -138,15 +149,18 @@ class UserFlightPreferences:
     def from_json(cls, data: dict) -> "UserFlightPreferences":
         data = data.copy()
         # Convert strings back to enum values for SeatClass, SeatRow, and SeatLocation
-        data["seat_class_preferences"] = {
-            SeatClass(k) for k in data["seat_class_preferences"]
-        }
-        data["seat_location_preference"] = SeatLocation(
-            data["seat_location_preference"]
-        )
-        data["seat_location_row_preference"] = SeatRow(
-            data["seat_location_row_preference"]
-        )
+        if "seat_class_preferences" in data:
+            data["seat_class_preferences"] = [
+                SeatClass(k) for k in data["seat_class_preferences"] if k is not None
+            ]
+        if "seat_location_preference" in data:
+            data["seat_location_preference"] = SeatLocation(
+                data["seat_location_preference"] or "aisle"
+            )
+        if "seat_location_row_preference" in data:
+            data["seat_location_row_preference"] = SeatRow(
+                data["seat_location_row_preference"] or "front"
+            )
 
         # Convert numerical values back to timedelta objects
         timedelta_keys = [
@@ -159,12 +173,15 @@ class UserFlightPreferences:
         ]
         for key in timedelta_keys:
             if key in data:
-                data[key] = datetime.timedelta(seconds=data[key])
+                data[key] = datetime.timedelta(seconds=int(data[key]))
 
         # Convert list of strings back to list of TimeOfDay enum values
-        data["time_of_day_order"] = [
-            TimeOfDay(time) for time in data["time_of_day_order"]
-        ]
+        if "time_of_day_order" in data:
+            data["time_of_day_order"] = [
+                TimeOfDay(time)
+                for time in data["time_of_day_order"]
+                if time is not None
+            ]
 
         return cls(**data)
 
@@ -190,9 +207,10 @@ class PassengerType(enum.StrEnum):
 
 @dataclass
 class PassengerInfo:
-    name: str
-    date_of_birth: datetime.date
-    phone_number: str
+    # TODO use a uuid or something in the from_json or something
+    name: str = "Generic Passenger"
+    date_of_birth: datetime.date = datetime.date(1990, 1, 1)
+    phone_number: str = "555-555-5555"
     email: str | None = None
     age: int | None = None
     ptype: PassengerType = PassengerType.ADULT
@@ -218,8 +236,14 @@ class PassengerInfo:
     @classmethod
     def from_json(cls, data: dict) -> "PassengerInfo":
         data = data.copy()
-        data["date_of_birth"] = datetime.date.fromisoformat(data["date_of_birth"])
-        if 'ptype' in data:
+        if "date_of_birth" in data:
+            try:
+                data["date_of_birth"] = datetime.date.fromisoformat(
+                    data["date_of_birth"]
+                )
+            except (ValueError, TypeError):
+                del data["date_of_birth"]
+        if "ptype" in data:
             data["ptype"] = PassengerType(data["ptype"])
         return cls(**data)
 
@@ -236,8 +260,10 @@ class PassengerInfo:
 
 @dataclass
 class User:
-    passenger_info: PassengerInfo
-    flight_preferences: UserFlightPreferences
+    passenger_info: PassengerInfo = field(default_factory=lambda: PassengerInfo())
+    flight_preferences: UserFlightPreferences = field(
+        default_factory=lambda: UserFlightPreferences()
+    )
     email: str | None = None
 
 
@@ -313,8 +339,8 @@ def parse_passenger_info(request: dict) -> PassengerInfo:
     if "passenger_name" not in request:
         return None, None
     passenger_name = request["passenger_name"]
-    if 'name' not in request['passenger_info']:
-        request['passenger_info']['name'] = passenger_name
+    if "name" not in request["passenger_info"]:
+        request["passenger_info"]["name"] = passenger_name
     try:
         passenger_info = PassengerInfo.from_json(request["passenger_info"])
     except KeyError as e:
@@ -362,6 +388,7 @@ def set_flight_preferences(
     with open(filename, "wb") as f:
         pickle.dump(all_flight_prefs, f)
     upload_file_to_gcs(filename, filename, bucket_name=bucket)
+    return {"success": True}
 
 
 def set_passenger_info(
@@ -385,6 +412,7 @@ def set_passenger_info(
     with open(filename, "wb") as f:
         pickle.dump(all_passengers, f)
     upload_file_to_gcs(filename, filename, bucket_name=bucket)
+    return {"success": True}
 
 
 def get_user(passenger_name: str, filename=None, bucket=None):
@@ -542,11 +570,7 @@ def seed_data():
             hard_max_layover_duration=datetime.timedelta(hours=6),
             soft_max_duration=datetime.timedelta(hours=5),
             hard_max_duration=datetime.timedelta(hours=20),
-            airline_preferences=[
-                "AM",
-                "UA",
-                "AA",
-            ],
+            airline_preferences=["AM", "UA", "AA"],
             seat_class_preferences=[SeatClass.ECONOMY],
             seat_location_preference=SeatLocation.AISLE,
             seat_location_row_preference=SeatRow.MIDDLE,

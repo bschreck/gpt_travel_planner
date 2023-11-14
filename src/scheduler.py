@@ -1,23 +1,118 @@
 from collections import defaultdict
 from ortools.sat.python import cp_model
-from shift_scheduling_app import add_soft_sequence_constraint
 from itertools import permutations
 from get_flight_data import build_flight_costs, build_flight_costs_from_remote_file
+from shift_scheduling_app import negated_bounded_span
 from dataclasses import dataclass
+from config import DEFAULT_BUCKET, DEFAULT_FLIGHTS_FILE
 import pandas as pd
 import pickle
+
+
+def add_soft_sequence_constraint(
+    model, works, hard_min, soft_min, min_cost, soft_max, hard_max, max_cost, prefix
+):
+    """Sequence constraint on true variables with soft and hard bounds.
+
+    This constraint look at every maximal contiguous sequence of variables
+    assigned to true. If forbids sequence of length < hard_min or > hard_max.
+    Then it creates penalty terms if the length is < soft_min or > soft_max.
+
+    Args:
+      model: the sequence constraint is built on this model.
+      works: a list of Boolean variables.
+      hard_min: any sequence of true variables must have a length of at least
+        hard_min.
+      soft_min: any sequence should have a length of at least soft_min, or a
+        linear penalty on the delta will be added to the objective.
+      min_cost: the coefficient of the linear penalty if the length is less than
+        soft_min.
+      soft_max: any sequence should have a length of at most soft_max, or a linear
+        penalty on the delta will be added to the objective.
+      hard_max: any sequence of true variables must have a length of at most
+        hard_max.
+      max_cost: the coefficient of the linear penalty if the length is more than
+        soft_max.
+      prefix: a base name for penalty literals.
+
+    Returns:
+      a tuple (variables_list, coefficient_list) containing the different
+      penalties created by the sequence constraint.
+    """
+    cost_literals = []
+    cost_coefficients = []
+
+    # Forbid sequences that are too short.
+    if hard_min is not None:
+        for length in range(1, hard_min):
+            for start in range(len(works) - length + 1):
+                model.AddBoolOr(negated_bounded_span(works, start, length))
+
+    # Penalize sequences that are below the soft limit.
+    if min_cost > 0 and soft_min is not None:
+        for length in range(hard_min, soft_min):
+            for start in range(len(works) - length + 1):
+                span = negated_bounded_span(works, start, length)
+                name = ": under_span(start=%i, length=%i)" % (start, length)
+                lit = model.NewBoolVar(prefix + name)
+                span.append(lit)
+                model.AddBoolOr(span)
+                cost_literals.append(lit)
+                # We filter exactly the sequence with a short length.
+                # The penalty is proportional to the delta with soft_min.
+                cost_coefficients.append(min_cost * (soft_min - length))
+
+    # Penalize sequences that are above the soft limit.
+    if max_cost > 0 and soft_max is not None:
+        for length in range(soft_max + 1, hard_max + 1):
+            for start in range(len(works) - length + 1):
+                span = negated_bounded_span(works, start, length)
+                name = ": over_span(start=%i, length=%i)" % (start, length)
+                lit = model.NewBoolVar(prefix + name)
+                span.append(lit)
+                model.AddBoolOr(span)
+                cost_literals.append(lit)
+                # Cost paid is max_cost * excess length.
+                cost_coefficients.append(max_cost * (length - soft_max))
+
+    # Just forbid any sequence of true variables with length hard_max + 1
+    if hard_max is not None:
+        for start in range(len(works) - hard_max):
+            model.AddBoolOr(
+                [works[i].Not() for i in range(start, start + hard_max + 1)]
+            )
+    return cost_literals, cost_coefficients
 
 
 @dataclass
 class ContiguousSequenceConstraint:
     city: str
-    hard_min: float
-    soft_min: float
-    hard_max: float
-    soft_max: float
+    hard_min: float = None
+    hard_max: float = None
+    soft_min: float = None
+    soft_max: float = None
     min_cost: float = 100
     max_cost: float = 100
     max_visits: int = 1
+
+    def __post_init__(self):
+        if (
+            self.hard_min is None
+            and self.hard_max is None
+            and self.soft_min is None
+            and self.soft_max is None
+        ):
+            raise ValueError(
+                "Must provide at least one of hard_min, hard_max, soft_min, soft_max"
+            )
+        if self.soft_min is None:
+            self.soft_min = self.hard_min
+        if self.hard_min is None:
+            self.hard_min = self.soft_min
+        if self.soft_max is None:
+            self.soft_max = self.hard_max
+        if self.hard_max is None:
+            self.hard_max = self.soft_max
 
 
 @dataclass
@@ -52,6 +147,7 @@ class Scheduler:
         date_range_constraints: list[DateRangeConstraint] | None = None,
         relevant_cities: list[str] | None = None,
         end_city: str | None = None,
+        must_visits: list[str] | None = None,
     ):
         self.ndays = ndays
         self.start_day, self.end_day = 1, ndays
@@ -65,9 +161,6 @@ class Scheduler:
             )
         self.contiguous_sequence_constraints = contiguous_sequence_constraints or []
         self.date_range_constraints = date_range_constraints or []
-        self.max_visits = {
-            sc.city: sc.max_visits for sc in self.contiguous_sequence_constraints
-        }
         self.start_city = start_city
         self.end_city = end_city or start_city
 
@@ -77,6 +170,11 @@ class Scheduler:
             sc.city for sc in self.contiguous_sequence_constraints
         )
         self.cities = self.cities | set(drc.city for drc in self.date_range_constraints)
+
+        # These default to 1
+        self.max_visits = {
+            sc.city: sc.max_visits for sc in self.contiguous_sequence_constraints
+        }
         self.flight_costs = get_approx_flight_data(flight_costs, self.cities)
         # remove irrelevant cities
         self.flight_costs = {
@@ -89,6 +187,12 @@ class Scheduler:
         for o, d in self.flight_costs:
             self.cities.add(o)
             self.cities.add(d)
+
+        self.must_visits = set(must_visits or [])
+        for sc in self.contiguous_sequence_constraints:
+            self.must_visits.add(sc.city)
+        for drc in self.date_range_constraints:
+            self.must_visits.add(drc.city)
 
     def get_days_in_city_var(self, city, visit, date):
         return self.days_in_city[f"{city}_{visit}_{date}"]
@@ -123,26 +227,26 @@ class Scheduler:
                 if drc.max_start_day is not None and drc.max_start_day == day:
                     # We should be in city at least one day before or equal to max_start_day
                     prior_days = [
-                        self.get_days_in_city_var(drc.city, drc.visit, day)
+                        self.get_days_in_city_var(drc.city, drc.visit, d)
                         for d in range(self.start_day, day + 1)
                     ]
                     self.model.AddBoolOr(prior_days)
 
-                # if we have both a max_start and min_end, we need to be in city
-                # all days in between
+                ## if we have both a max_start and min_end, we need to be in city
+                ## all days in between
                 if (
                     drc.max_start_day is not None
-                    and drc.max_start_day >= day
+                    and drc.max_start_day <= day
                     and drc.min_end_day is not None
-                    and drc.min_end_day <= day
+                    and drc.min_end_day >= day
                 ):
                     self.model.Add(var == 1)
 
-                # otherwise with a min_end_day we have to at least be in city on min_end_day
+                ## otherwise with a min_end_day we have to at least be in city on min_end_day
                 elif drc.min_end_day is not None and drc.min_end_day == day:
                     self.model.Add(var == 1)
 
-                # We should not be in city after max_end_day
+                ## We should not be in city after max_end_day
                 if drc.max_end_day is not None and drc.max_end_day < day:
                     self.model.Add(var == 0)
 
@@ -310,7 +414,7 @@ class Scheduler:
             for visit in visits:
                 # TODO this can be parameterized if user wants to visit a city at least N times
                 # TODO do we need a check on not end_city too?
-                must_visit = visit == 1 and city != self.start_city
+                must_visit = city in self.must_visits
                 days_in_city_vars = [
                     self.get_days_in_city_var(city, visit, day)
                     for day in range(self.start_day, self.ndays + 1)
@@ -461,6 +565,67 @@ def get_approx_flight_data(nonstop_flight_costs, relevant_cities, layover_time=2
                 approx_flight_data[(i, j)] = expanded_dict_flights[i][j]
 
     return approx_flight_data
+
+
+@dataclass
+class ScheduleTripParams:
+    start_city: str
+    ndays: int
+    bucket: str = DEFAULT_BUCKET
+    filename: str = DEFAULT_FLIGHTS_FILE
+    contiguous_sequence_constraints: list[ContiguousSequenceConstraint] | None = None
+    date_range_constraints: list[DateRangeConstraint] | None = None
+    end_city: str | None = None
+    relevant_cities: list[str] | None = None
+    must_visits: list[str] | None = None
+
+
+def parse_schedule_trip_json(request_json: dict) -> ScheduleTripParams:
+    start_city = request_json["start_city"]
+    end_city = request_json.get("end_city", None)
+    ndays = request_json["ndays"]
+    bucket = request_json.get("bucket", DEFAULT_BUCKET)
+    filename = request_json.get("filename", DEFAULT_FLIGHTS_FILE)
+    contiguous_sequence_constraints = []
+    relevant_cities = request_json.get("relevant_cities", [])
+    must_visits=request_json.get("must_visits", [])
+    for sc_raw in request_json.get("contiguous_sequence_constraints", []):
+        contiguous_sequence_constraints.append(
+            ContiguousSequenceConstraint(
+                city=sc_raw["city"],
+                hard_min=sc_raw.get("hard_min", None),
+                soft_min=sc_raw.get("soft_min", None),
+                soft_max=sc_raw.get("soft_max", None),
+                hard_max=sc_raw.get("hard_max", None),
+                min_cost=sc_raw.get("min_cost", 100),
+                max_cost=sc_raw.get("max_cost", 100),
+                max_visits=sc_raw.get("max_visits", 1),
+            )
+        )
+    date_range_constraints = []
+    for drc_raw in request_json.get("date_range_constraints", []):
+        date_range_constraints.append(
+            DateRangeConstraint(
+                city=drc_raw["city"],
+                min_start_day=drc_raw.get("min_start_day", None),
+                max_start_day=drc_raw.get("max_start_day", None),
+                min_end_day=drc_raw.get("min_end_day", None),
+                max_end_day=drc_raw.get("max_end_day", None),
+                visit=drc_raw.get("visit", 1),
+            )
+        )
+
+    return ScheduleTripParams(
+        start_city=start_city,
+        end_city=end_city,
+        ndays=ndays,
+        bucket=bucket,
+        filename=filename,
+        contiguous_sequence_constraints=contiguous_sequence_constraints,
+        date_range_constraints=date_range_constraints,
+        relevant_cities=relevant_cities,
+        must_visits=must_visits,
+    )
 
 
 if __name__ == "__main__":

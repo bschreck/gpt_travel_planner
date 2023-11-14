@@ -48,12 +48,22 @@ def cache_with_ttl(ttl: int = 60 * 60 * 24):
             if not cache_entry.get("result") or (
                 last_updated and current_time - last_updated > ttl
             ):
+                print("cache miss")
                 cache_entry["last_updated"] = current_time
                 res = original_func(*args, **kwargs)
                 cache_entry["result"] = res
                 cache_with_ttl_decorator.cache[name] = cache_entry
+            else:
+                print("cache hit")
             return cache_entry["result"]
 
         return new_func
 
     return cache_with_ttl_decorator
+
+
+def scale_weights(weights: list[float]) -> list[float]:
+    total = sum(weights)
+    if total == 0:
+        return [0] * len(weights)
+    return [weight / total for weight in weights]

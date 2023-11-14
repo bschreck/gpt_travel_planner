@@ -10,3 +10,7 @@ DEFAULT_FLIGHT_PREFERENCES_FILE = os.environ.get(
 DEFAULT_PASSENGER_INFO_FILE = os.environ.get(
     "DEFAULT_PASSENGER_INFO_FILE", "passenger_info.pickle"
 )
+
+
+def get_env():
+    return os.environ.get("ENV", "local")
