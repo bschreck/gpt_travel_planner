@@ -216,9 +216,17 @@ class PassengerInfo:
     ptype: PassengerType = PassengerType.ADULT
 
     def to_duffel_dict(self):
+        name_split = self.name.rsplit(" ", 1)
+        if len(name_split) == 2:
+            family_name = name_split[1]
+            given_name = name_split[0]
+        else:
+            family_name = name_split[0]
+            given_name = "Fakename"
+
         d = {
-            "family_name": self.name.rsplit(" ", 1)[1],
-            "given_name": self.name.rsplit(" ", 1)[0],
+            "family_name": family_name,
+            "given_name": given_name,
             "date_of_birth": self.date_of_birth.strftime("%Y-%m-%d"),
         }
         if self.age:
@@ -455,7 +463,9 @@ def search_flights(
     if passengers is None:
         duffel_passengers = [{"type": "adult"}]
     else:
-        duffel_passengers = [p.to_duffel_dict() for p in passengers]
+        duffel_passengers = [p.to_duffel_dict() for p in passengers if p]
+        if len(duffel_passengers) == 0:
+            duffel_passengers = [{"type": "adult"}]
 
     return (
         duffel.offer_requests.create()

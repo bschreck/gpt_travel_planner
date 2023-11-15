@@ -20,7 +20,11 @@ from utils import (
     cache_with_ttl,
     persist_to_file,
 )
-from config import DEFAULT_IATA_CODES_FILE
+from config import (
+    DEFAULT_IATA_CODES_FILE,
+    DEFAULT_FLIGHT_COSTS_FILE,
+    DEFAULT_FLIGHTS_FILE
+)
 
 
 def open_and_save_new_data(new_data, output_file, bucket):
@@ -232,8 +236,8 @@ def build_flight_costs(flights):
 
 
 # TODO ttl
+@cache_with_ttl(ttl=60 * 60 * 24)
 @persist_to_file("flights_cache.pickle")
-# @cache_with_ttl(ttl=60 * 60 * 24)
 def build_flight_costs_from_remote_file(bucket, remote_filename, local_filename):
     download_file_from_gcs(remote_filename, local_filename, bucket)
     with open(local_filename, "rb") as f:
@@ -241,6 +245,8 @@ def build_flight_costs_from_remote_file(bucket, remote_filename, local_filename)
     return build_flight_costs(flights)
 
 
+@cache_with_ttl(ttl=60 * 60 * 24)
+@persist_to_file(DEFAULT_FLIGHT_COSTS_FILE)
 def make_local_flight_costs_full(flights_local_file, flight_costs_local_file):
     from scheduler import get_approx_flight_data
     with open(flights_local_file, "rb") as f:
@@ -256,15 +262,29 @@ def make_local_flight_costs_full(flights_local_file, flight_costs_local_file):
 def iata_codes_from_file(filename=DEFAULT_IATA_CODES_FILE):
     return pd.read_csv(filename)
 
-def get_iata_codes_by_country(request):
-    country = request.get_json(silent=True)['country']
+@cache_with_ttl(ttl=60 * 60 * 24)
+def _get_iata_codes_by_country(country):
+    flight_costs = make_local_flight_costs_full(DEFAULT_FLIGHTS_FILE, DEFAULT_FLIGHT_COSTS_FILE)
+    available_airports = set()
+    for origin, destination in flight_costs:
+        available_airports.add(origin)
+        available_airports.add(destination)
     iata_codes = iata_codes_from_file()
     relevant = iata_codes[
         (iata_codes['iso_country'] == country)
         & (iata_codes['type'].isin(['large_airport', 'medium_airport']))
     ]
-    return {v[0]: v[1] for v in relevant[['iata_code', 'municipality']].values
-            if isinstance(v[0], str) and isinstance(v[1], str)}
+    return {
+        v[0]: v[1] for v in relevant[['iata_code', 'municipality']].values
+        if isinstance(v[0], str) and isinstance(v[1], str)
+        and v[0] in available_airports
+    }
+
+# TODO cleanup
+@cache_with_ttl(ttl=60 * 60 * 24)
+def get_iata_codes_by_country(request):
+    country = request.get_json(silent=True)['country']
+    return _get_iata_codes_by_country(country)
 
 if __name__ == "__main__":
     fire.Fire(main)

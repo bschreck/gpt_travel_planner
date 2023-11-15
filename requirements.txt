@@ -1,1 +1,17 @@
 .
+openai
+duffel-api
+ortools
+pyflightdata
+numpy
+pandas
+tenacity
+tqdm
+fire
+httpx
+haversine
+networkx
+python-dotenv
+functions-framework==3.*
+google-cloud-storage
+scipy

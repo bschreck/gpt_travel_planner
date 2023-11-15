@@ -133,18 +133,14 @@ def schedule_trip(request, bucket=DEFAULT_BUCKET, flight_costs_file=DEFAULT_FLIG
         params = parse_schedule_trip_json(request.get_json(silent=True))
     except ValueError as e:
         return (f"Error parsing input: {e}", 400, {})
-    if not os.path.exists(flight_costs_file):
-        if not os.path.exists(flights_file):
-            print("downloading and building flight costs")
-            flight_costs = build_flight_costs_from_remote_file(
-                params.bucket, params.filename, params.filename
-            )
-        print("making local all pairs flight costs")
-        flight_costs = make_local_flight_costs_full(flights_file, flight_costs_file)
-    else:
-        print("loading local all pairs flight costs")
-        with open(flight_costs_file, "rb") as f:
-            flight_costs = pickle.load(f)
+
+    # TODO don't need to load the cached file here, just make sure it exists
+    # pass in to the next function
+    build_flight_costs_from_remote_file(
+        params.bucket, params.filename, params.filename
+    )
+    print("making local all pairs flight costs")
+    flight_costs = make_local_flight_costs_full(flights_file, flight_costs_file)
     print("building scheduler")
     try:
         scheduler = Scheduler(
@@ -194,9 +190,27 @@ def schedule_trip(request, bucket=DEFAULT_BUCKET, flight_costs_file=DEFAULT_FLIG
 
 @functions_framework.http
 def functions_entrypoint(request):
+    # TODO try removing cors
+    if request.method == "OPTIONS":
+        # Allows GET requests from any origin with the Content-Type
+        # header and caches preflight response for an 3600s
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "3600",
+        }
+
+        return ("", 204, headers)
+    headers = {"Access-Control-Allow-Origin": "*"}
+
+
+
+    print("got request")
     function = request.args.get("function")
+    print("function", function)
     if function is None:
-        return ("function is required", 400, {})
+        return ("function is required", 400, headers)
     try:
         if function == "set_flight_preferences":
             return set_flight_preferences(request)
@@ -213,7 +227,7 @@ def functions_entrypoint(request):
         elif function == "get_iata_codes_by_country":
             return get_iata_codes_by_country(request)
         else:
-            return (f"function {function} not found", 404, {})
+            return (f"function {function} not found", 404, headers)
     except Exception as e:
         print(e)
         # print stacktrace
@@ -221,4 +235,4 @@ def functions_entrypoint(request):
 
         print(traceback.format_exc())
 
-        return (f"Error: {e}", 500, {})
+        return (f"Error: {e}", 500, headers)

@@ -11,8 +11,8 @@ import pickle
 import networkx as nx
 from networkx import all_pairs_dijkstra_path
 import numpy as np
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra
+#from scipy.sparse import csr_matrix
+#from scipy.sparse.csgraph import dijkstra
 
 
 def add_soft_sequence_constraint(
@@ -565,45 +565,45 @@ def get_approx_flight_data(nonstop_flight_costs, layover_time=2):
     return expanded_dict_flights
 
 
-def get_approx_flight_data_scipy(nonstop_flight_costs, layover_time=2):
-    nodes = set()
-    for (o, d), _ in nonstop_flight_costs.items():
-        nodes.update([o, d])
-    nodes = sorted(list(nodes))
-    node_indices = {node: i for i, node in enumerate(nodes)}
-
-    num_nodes = len(nodes)
-    graph_matrix = np.full((num_nodes, num_nodes), np.inf)
-    np.fill_diagonal(graph_matrix, 0)
-
-    for (o, d), cost in nonstop_flight_costs.items():
-        o_idx, d_idx = node_indices[o], node_indices[d]
-        graph_matrix[o_idx][d_idx] = cost
-
-    sparse_matrix = csr_matrix(graph_matrix)
-
-    distances, predecessors = dijkstra(csgraph=sparse_matrix, directed=False, return_predecessors=True, indices=None)
-
-    def get_path(Pr, i, j):
-        path = [j]
-        k = j
-        while Pr[i, k] != -9999:
-            path.append(Pr[i, k])
-            k = Pr[i, k]
-        return path[::-1]
-
-    expanded_dict_flights = {}
-    for o in nodes:
-        o_idx = node_indices[o]
-        for d in nodes:
-            d_idx = node_indices[d]
-            if o != d and distances[o_idx, d_idx] != np.inf:
-                path_indices = get_path(predecessors, o_idx, d_idx)
-                path = [nodes[idx] for idx in path_indices]
-                layover_cost = layover_time * (len(path) - 2)
-                total_cost = distances[o_idx, d_idx] + layover_cost
-                expanded_dict_flights[(o, d)] = total_cost
-    return expanded_dict_flights
+#def get_approx_flight_data_scipy(nonstop_flight_costs, layover_time=2):
+#    nodes = set()
+#    for (o, d), _ in nonstop_flight_costs.items():
+#        nodes.update([o, d])
+#    nodes = sorted(list(nodes))
+#    node_indices = {node: i for i, node in enumerate(nodes)}
+#
+#    num_nodes = len(nodes)
+#    graph_matrix = np.full((num_nodes, num_nodes), np.inf)
+#    np.fill_diagonal(graph_matrix, 0)
+#
+#    for (o, d), cost in nonstop_flight_costs.items():
+#        o_idx, d_idx = node_indices[o], node_indices[d]
+#        graph_matrix[o_idx][d_idx] = cost
+#
+#    sparse_matrix = csr_matrix(graph_matrix)
+#
+#    distances, predecessors = dijkstra(csgraph=sparse_matrix, directed=False, return_predecessors=True, indices=None)
+#
+#    def get_path(Pr, i, j):
+#        path = [j]
+#        k = j
+#        while Pr[i, k] != -9999:
+#            path.append(Pr[i, k])
+#            k = Pr[i, k]
+#        return path[::-1]
+#
+#    expanded_dict_flights = {}
+#    for o in nodes:
+#        o_idx = node_indices[o]
+#        for d in nodes:
+#            d_idx = node_indices[d]
+#            if o != d and distances[o_idx, d_idx] != np.inf:
+#                path_indices = get_path(predecessors, o_idx, d_idx)
+#                path = [nodes[idx] for idx in path_indices]
+#                layover_cost = layover_time * (len(path) - 2)
+#                total_cost = distances[o_idx, d_idx] + layover_cost
+#                expanded_dict_flights[(o, d)] = total_cost
+#    return expanded_dict_flights
 
 
 

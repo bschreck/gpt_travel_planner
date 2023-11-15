@@ -84,7 +84,20 @@ def create_or_retrieve_user_thread(user_id):
    #  """,
 #  )
 prompt = """
-I am a 30yo male living in Los Angeles, CA.    I want to spend December in South America. It is currently November 7th.    My goal is to see and explore historical/cultural places, to relax on the beach, to meet interesting people, to get better at surfing, and to eat interesting new food.    I want to spend part of the time climbing mountains in Patagonia.    I don't care about fancy lodging, but I do appreciate private rooms and bathrooms.    I'll be traveling alone, and have a budget of $5000.    Some other constraints:    - I want to stay with my friends in Bogota for a week before December 20th.    - I don't care too much about Christmas, but it would be fun being somewhere with a lot of Christmas spirit.    - I'm flying from LAX.    - I want to spend at least 4 days in Buenos Aires with my cousins who will be there Dec 15-31. I'd like to stay there or nearby.    - I want to use either Aeromexico miles (via Amex transfer) or fly on United or American (since I have flight credits) as much as possible.     My preferences are for short trip duration over low price, but stick to my budget and use economy class.
+I am a 30yo male living in Los Angeles, CA.
+I want to spend December in South America. It is currently November 7th.
+My goal is to see and explore historical/cultural places, to relax on the beach, to meet interesting people, to get better at surfing, and to eat interesting new food.
+I want to spend part of the time learning samba in Rio.
+I don't care about fancy lodging, but I do appreciate private rooms and bathrooms.
+I'll be traveling alone, and have a budget of $5000.
+Some other constraints:
+- I want to stay with my friends in Bogota for a week before December 20th.
+- I don't care too much about Christmas, but it would be fun being somewhere with a lot of Christmas spirit.
+- I'm flying from LAX.
+- I want to spend at least 4 days in Buenos Aires with my cousins who will be there Dec 15-31.
+I'd like to stay there or nearby.
+- I want to use either Aeromexico miles (via Amex transfer) or fly on United or American (since I have flight credits) as much as possible.
+My preferences are for short trip duration over low price, but stick to my budget and use economy class.
 """
 
 

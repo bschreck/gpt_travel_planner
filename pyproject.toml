@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv",
     "functions-framework==3.*",
     "google-cloud-storage",
+    "scipy"
 ]
 
 [project.optional-dependencies]

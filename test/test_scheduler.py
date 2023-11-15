@@ -1,4 +1,4 @@
-from scheduler import Scheduler, parse_schedule_trip_json, get_approx_flight_data, get_approx_flight_data_scipy
+from scheduler import Scheduler, parse_schedule_trip_json, get_approx_flight_data#, get_approx_flight_data_scipy
 from get_flight_data import build_flight_costs
 import pytest
 import pickle
